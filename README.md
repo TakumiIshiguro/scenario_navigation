@@ -5,6 +5,15 @@
 orne_navigation  
 https://github.com/open-rdc/orne_navigation  
 
+Mecab
+```
+pip3 install mecab-python3
+```
+```
+git clone --depth 1 https://github.com/neologd/mecab-ipadic-neologd.git
+cd mecab-ipadic-neologd
+./bin/install-mecab-ipadic-neologd -n
+```
 ### Execute  
 
 - Simulator (without vison)  
