@@ -1,9 +1,9 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import rospy
 import rosparam
 from std_msgs.msg import String
-from intersection_recognition.srv import Scenario
+from  scenario_navigation.srv import Scenario
 import MeCab
 
 class ScenarioParser:
@@ -28,6 +28,7 @@ class ScenarioParser:
         self.type_ = []
         self.condition_ = []
         self.mecab = MeCab.Tagger('-Owakati -d /usr/lib/x86_64-linux-gnu/mecab/dic/mecab-ipadic-neologd')
+        #self.mecab = MeCab.Tagger('-Owakati -d /usr/share/mecab/dic/ipadic')
 
 # complement direction to turn if scenario-action is "turn_"
     def complement_scenario_action_turn_xxx(self, direction, action):
