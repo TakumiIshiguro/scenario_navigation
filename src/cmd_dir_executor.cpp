@@ -174,7 +174,7 @@ void cmdVelController::loadNextScenario(void){
         ROS_INFO("Robot gets a goal");
         std_msgs::Bool stop_flg_for_pub;
         stop_flg_for_pub.data = stop_flg_;
-        stop_pub_.publish(stop_flg_for_pub);
+        // stop_pub_.publish(stop_flg_for_pub);
     }
     else{
         ROS_INFO("Execute next action(%s)", action.c_str());
@@ -188,19 +188,19 @@ void cmdVelController::loadNextScenario(void){
             if(action == "turn_left"){
                 rotate_rad_for_pub_.data = M_PI_2; //1.57 = 90
                 std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
-                std::cout <<"L" << rotate_rad_for_pub_.data << std::endl;
+                // std::cout <<"L" << rotate_rad_for_pub_.data << std::endl;
             }
             //else if(action.find("right")){
             else if(action == "turn_right"){
                 rotate_rad_for_pub_.data = -M_PI_2; //-1.57 = -90
                 std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
-                std::cout <<"R" << rotate_rad_for_pub_.data << std::endl;
+                // std::cout <<"R" << rotate_rad_for_pub_.data << std::endl;
             }
-            else{
-                rotate_rad_for_pub_.data = M_PI;
+            // else{
+            //     rotate_rad_for_pub_.data = M_PI;
 
-            }
-            rotate_rad_pub_.publish(rotate_rad_for_pub_);
+            // }
+            // rotate_rad_pub_.publish(rotate_rad_for_pub_);
             cmd_data_pub.publish(cmd_data);
         }
     }
