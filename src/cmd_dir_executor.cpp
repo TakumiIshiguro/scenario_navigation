@@ -77,9 +77,9 @@ class cmdVelController {
 
 cmdVelController::cmdVelController(){
     stop_pub_ = node_.advertise<std_msgs::Bool>("stop", 1, false);
-    rotate_rad_pub_ = node_.advertise<std_msgs::Float32>("rotate_rad", 1, false);
+    // rotate_rad_pub_ = node_.advertise<std_msgs::Float32>("rotate_rad", 1, false);
 
-    turn_finish_flg_sub_ = node_.subscribe<std_msgs::Bool> ("turn_finish_flg", 1, &cmdVelController::turnFinishFlgCallback, this);
+    // turn_finish_flg_sub_ = node_.subscribe<std_msgs::Bool> ("turn_finish_flg", 1, &cmdVelController::turnFinishFlgCallback, this);
     passage_type_sub_ = node_.subscribe<scenario_navigation::PassageType> ("passage_type", 1, &cmdVelController::passageTypeCallback, this);
     stop_sub_ = node_.subscribe<std_msgs::Bool> ("stop", 1, &cmdVelController::stopCallback, this);
     scenario_server_ = node_.advertiseService("scenario", &cmdVelController::scenarioCallback, this);
