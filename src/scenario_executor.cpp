@@ -70,9 +70,9 @@ class cmdVelController {
                 {0,0,100,0},
                 {0,0,0,100},
                 };
-        int str_list[4] = {0,100,0,0};
-        int right_list[4] = {0,0,0,100};
-        int left_list[4] = {0,0,100,0};
+        int str_list[3] = {1,0,0};
+        int right_list[3] = {0,0,100};
+        int left_list[3] = {0,100,0};
 };
 
 cmdVelController::cmdVelController(){

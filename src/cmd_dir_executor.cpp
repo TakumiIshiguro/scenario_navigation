@@ -49,9 +49,10 @@ class cmdVelController {
         std::list<std::string>::iterator target_direction_itr_begin_;
         std::list<std::string>::iterator target_action_itr_begin_;
 
+        std::string action;
         int scenario_num_ = 0;
         int scenario_progress_cnt_ = 0;
-        int scenario_order_cnt_ = 0;
+        int scenario_order_cnt_ = 1;
         int reach_target_type_cnt_ = 0;
         int reach_different_type_cnt_ = 0;
         int reach_target_type_cnt_margin_ = 6;
@@ -64,15 +65,10 @@ class cmdVelController {
         bool request_update_last_node_flg = true;
         std_msgs::Float32 rotate_rad_for_pub_;
         scenario_navigation::PassageType last_node_;
-         int list[4][4]={
-                {100,0,0,0},
-                {0,100,0,0},
-                {0,0,100,0},
-                {0,0,0,100},
-                };
-        int str_list[4] = {0,100,0,0};
-        int right_list[4] = {0,0,0,100};
-        int left_list[4] = {0,0,100,0};
+        
+        int str_list[3] = {1,0,0};
+        int left_list[3] = {0,1,0};
+        int right_list[3] = {0,0,1};
 };
 
 cmdVelController::cmdVelController(){
@@ -84,7 +80,7 @@ cmdVelController::cmdVelController(){
     stop_sub_ = node_.subscribe<std_msgs::Bool> ("stop", 1, &cmdVelController::stopCallback, this);
     scenario_server_ = node_.advertiseService("scenario", &cmdVelController::scenarioCallback, this);
     cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
-    cmd_data.data.resize(4);
+    cmd_data.data.resize(3);
 
     updateLastNode(false, false, false, false);
     getRosParam();
@@ -165,6 +161,7 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation::
 }
 
 void cmdVelController::loadNextScenario(void){
+    // std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
     std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
 
 // stop robot
@@ -182,7 +179,7 @@ void cmdVelController::loadNextScenario(void){
         change_node_flg_ = false;
         std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.data));
         if(action.find("turn") != std::string::npos){
-            turn_flg_ = true;
+            //turn_flg_ = true;
 
             //if(action.find("left")){
             if(action == "turn_left"){
@@ -193,7 +190,7 @@ void cmdVelController::loadNextScenario(void){
             //else if(action.find("right")){
             else if(action == "turn_right"){
                 rotate_rad_for_pub_.data = -M_PI_2; //-1.57 = -90
-                std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
+                std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.data));
                 // std::cout <<"R" << rotate_rad_for_pub_.data << std::endl;
             }
             // else{
@@ -235,7 +232,7 @@ void cmdVelController::passageTypeCallback(const scenario_navigation::PassageTyp
         }
         if(! turn_flg_){
             if(change_node_flg_){
-                cmd_data_pub.publish(cmd_data);
+                //cmd_data_pub.publish(cmd_data);
                 satisfy_conditions_flg_ = compareScenarioAndPassageType(passage_type);
                 if(satisfy_conditions_flg_){
                     ROS_INFO("find target node");
@@ -258,11 +255,30 @@ void cmdVelController::passageTypeCallback(const scenario_navigation::PassageTyp
                     reach_target_type_cnt_ = 0;
                     cmd_data_pub.publish(cmd_data);
                 }
+                if (action == "turn_left" || action == "turn_right")
+                    {
+                        ROS_INFO("finish turn");
+                        turn_flg_ = false;
+                        scenario_progress_cnt_++;
+                        loadNextScenario();
+                        request_update_last_node_flg = true;
+                        //change_node_flg_ = false;
+                    }
             }
             else{
                 if(! compareLastNodeAndCurrentNode(passage_type)){
                     reach_different_type_cnt_++;
-                    cmd_data_pub.publish(cmd_data);
+                    // cmd_data_pub.publish(cmd_data);
+                    if (action == "turn_left" || action == "turn_right")
+                    {
+                        ROS_INFO("finish turn");
+                        turn_flg_ = false;
+                        scenario_progress_cnt_++;
+                        loadNextScenario();
+                        request_update_last_node_flg = true;
+                        //change_node_flg_ = false;
+                    }
+                    
                     if(reach_different_type_cnt_margin_ <= reach_different_type_cnt_){
                         reach_different_type_cnt_ = 0;
                         updateLastNode(passage_type->center_flg, passage_type->back_flg, passage_type->left_flg, passage_type->right_flg);

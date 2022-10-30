@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from typing_extensions import Self
+
+
 import rospy
 import rosparam
 from std_msgs.msg import String
+#from jsk_rviz_plugins.msg import OverlayText
 from  scenario_navigation.srv import Scenario
 import MeCab
 
@@ -11,7 +15,7 @@ class ScenarioParser:
         self.hz = 1
         self.loop_rate = rospy.Rate(self.hz)
         self.scenario_service_proxy_ = rospy.ServiceProxy('scenario', Scenario)
-
+       
         self.ACTIONS = ["直進", "前進", "右折", "左折", "向く", "停止", "曲がる"]
         self.DIRECTIONS = ["前", "前方", "右", "右手", "左", "左手", "後ろ", "後方"]
         self.TYPE = ["一本道", "三叉路", "行き止まり", "十字路", "突き当り", "曲がり角", "角", "通路", "交差点"]
@@ -230,7 +234,8 @@ if __name__ == '__main__':
     try:
         rospy.init_node('scenario_parser', anonymous=True)
         scenario_parser = ScenarioParser()
-
+        # text_pub = rospy.Publisher('scenariotopic',OverlayText,queue_size=1)
+        # text_data = OverlayText
         scenario_path = "/root/share/mecab/scenario.txt"
         try:
             scenario_path = rosparam.get_param("scenario_parser/scenario_path")
@@ -239,14 +244,14 @@ if __name__ == '__main__':
 
         with open(scenario_path) as f:
             data = f.readlines()
-
         for scenario in data:
             print("#######################################")
             print(scenario)
             scenario_parser.get_condition_and_action(scenario)
             scenario_parser.show_result()
             print("#######################################\n")
-
+        # text_data.text =scenario
+        # text_pub.publish(text_data)
         rospy.wait_for_service('scenario')
         for i in range(len(scenario_parser.type_)):
             scenario_parser.send_scenarios(i)
