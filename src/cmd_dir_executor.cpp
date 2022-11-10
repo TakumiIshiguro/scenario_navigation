@@ -19,17 +19,27 @@ class cmdVelController {
         int SCENARIO_MAX = 10;
         void getRosParam(void);
         bool compareScenarioAndPassageType(const scenario_navigation::PassageType::ConstPtr& passage_type);
-        void loadNextScenario(void);
+        void loadNextScenario(void);//
         void updateLastNode(bool center_flg, bool back_flg, bool left_flg, bool right_flg);
-        bool compareLastNodeAndCurrentNode(const scenario_navigation::PassageType::ConstPtr& passage_type);
 
-        void turnFinishFlgCallback(const std_msgs::Bool::ConstPtr& turn_finish_flg);
+        bool compareLastNodeAndCurrentNode(const scenario_navigation::PassageType::ConstPtr& passage_type);
+        void turnFinishFlgCallback(const std_msgs::Bool::ConstPtr& turn_finish_flg); //
         void passageTypeCallback(const scenario_navigation::PassageType::ConstPtr& passage_type);
-        void stopCallback(const std_msgs::Bool::ConstPtr& stop);
+
+        // <intersection>
+        //bool compareScenarioAndPassageType(const std_msgs::String::ConstPtr& intersection_name);
+        //void loadNextScenario(void);//
+        //void updateLastNode(bool center_flg, bool back_flg, bool left_flg, bool right_flg);
+        //bool compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name);
+        //void turnFinishFlgCallback(const std_msgs::Bool::ConstPtr& turn_finish_flg);
+        //void passageTypeCallback(const std_msgs::String::ConstPtr& intersection_name);
+        
+        void stopCallback(const std_msgs::Bool::ConstPtr& stop); //
         bool scenarioCallback(scenario_navigation::Scenario::Request& scenario,
                               scenario_navigation::Scenario::Response& res);
      private:
         ros::NodeHandle node_;
+        /*
         ros::Publisher stop_pub_;
         ros::Publisher rotate_rad_pub_;
         ros::Publisher cmd_data_pub;
@@ -37,6 +47,16 @@ class cmdVelController {
         ros::Subscriber stop_sub_;
         ros::Subscriber turn_finish_flg_sub_;
         ros::ServiceServer scenario_server_;
+        */
+
+        // <intersection>
+        ros::Publisher stop_pub_;
+        ros::Publisher cmd_data_pub;
+        ros::Subscriber intersection_sub_;
+        ros::Subscriber stop_sub_;
+        ros::Subscriber turn_finish_flg_sub_;
+        ros::ServiceServer scenario_server_;
+
 
         std::list<std::string> target_type_;
         std::list<std::int16_t> target_order_;
@@ -65,7 +85,7 @@ class cmdVelController {
         bool request_update_last_node_flg = true;
         std_msgs::Float32 rotate_rad_for_pub_;
         scenario_navigation::PassageType last_node_;
-        
+        std_msgs::String last_node_
         int str_list[3] = {1,0,0};
         int left_list[3] = {0,1,0};
         int right_list[3] = {0,0,1};
@@ -76,7 +96,9 @@ cmdVelController::cmdVelController(){
     // rotate_rad_pub_ = node_.advertise<std_msgs::Float32>("rotate_rad", 1, false);
 
     // turn_finish_flg_sub_ = node_.subscribe<std_msgs::Bool> ("turn_finish_flg", 1, &cmdVelController::turnFinishFlgCallback, this);
-    passage_type_sub_ = node_.subscribe<scenario_navigation::PassageType> ("passage_type", 1, &cmdVelController::passageTypeCallback, this);
+    passage_type_sub_ = node_.subscribe<scenario_navigation::PassageType> ("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
+    // passage_type_sub_ = node_.subscribe<std_msgs::String> ("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
+
     stop_sub_ = node_.subscribe<std_msgs::Bool> ("stop", 1, &cmdVelController::stopCallback, this);
     scenario_server_ = node_.advertiseService("scenario", &cmdVelController::scenarioCallback, this);
     cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
@@ -90,7 +112,56 @@ void cmdVelController::getRosParam(void){
     SCENARIO_MAX = 10;
     node_.getParam("scenario_executor/scenario_max", SCENARIO_MAX);
 }
+//<intersection>
+bool cmdVelController::compareScenarioAndPassageType(const std_msgs::String::ConstPtr& passage_type){
+    std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_);
+    std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_);
 
+    //check "straight_road"
+    if(target_type == "straight_road"){
+        if(passage_type->last_node_.data){
+            return true;
+        }
+    }
+
+    // check 3_way_left and 3_way_right when 3_way is designated by scenario
+    if(target_type == "3_way"){
+        if(passage_type->last_node_.data){
+            return true;
+        }
+        }
+
+    // check "end"(= 突き当り)
+    if(target_type == "end"){
+    // dead_end
+         if(passage_type->last_node_.data){
+            return true;
+        }
+       
+    }
+
+    // check "corridor"(ex, 交差点， 通路)
+    if(target_type == "corridor"){
+        if(target_direction == "left"){
+            if(passage_type->left_flg){
+                return true;
+            }
+        }
+        else if(target_direction == "right"){
+            if(passage_type->right_flg){
+                return true;
+            }
+        }
+    // if target_direction is not designated, do below
+        else{
+            if(passage_type->left_flg || passage_type->right_flg){
+                return true;
+            }
+        }
+    }
+    return false;
+}
+/*
 bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation::PassageType::ConstPtr& passage_type){
     std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_);
     std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_);
@@ -159,7 +230,7 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation::
     }
     return false;
 }
-
+*/
 void cmdVelController::loadNextScenario(void){
     // std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
     std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
@@ -177,7 +248,7 @@ void cmdVelController::loadNextScenario(void){
         ROS_INFO("Execute next action(%s)", action.c_str());
         stop_flg_ = false;
         change_node_flg_ = false;
-        std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.data));
+        
         if(action.find("turn") != std::string::npos){
             //turn_flg_ = true;
 
@@ -198,11 +269,21 @@ void cmdVelController::loadNextScenario(void){
 
             // }
             // rotate_rad_pub_.publish(rotate_rad_for_pub_);
-            cmd_data_pub.publish(cmd_data);
         }
+        else{
+            std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.data));
+        }
+        cmd_data_pub.publish(cmd_data);
     }
 }
 
+// <intersection>
+void cmdVelController::updateLastNode(std_msgs::string intersection_n){
+    ROS_INFO("update last node");
+    ROS_INFO("last node is (%s)",intersection_n);
+   last_node_.data = intersection_n->data
+}
+/*
 void cmdVelController::updateLastNode(bool center_flg, bool back_flg, bool left_flg, bool right_flg){
     ROS_INFO("update last node");
     ROS_INFO("last node is front(%d) back(%d) left(%d) right(%d)", static_cast<int>(center_flg), static_cast<int>(back_flg),
@@ -211,8 +292,17 @@ void cmdVelController::updateLastNode(bool center_flg, bool back_flg, bool left_
     last_node_.back_flg = back_flg;
     last_node_.left_flg = left_flg;
     last_node_.right_flg = right_flg;
-}
+}*/
 
+bool cmdVelController::compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name){
+    if(last_node_.data == intersection_name->data){
+            return true;
+        }
+    else{
+        return false;
+    }
+ }
+/*
 bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation::PassageType::ConstPtr& passage_type){
     if(last_node_.center_flg == passage_type->center_flg && last_node_.back_flg == passage_type->back_flg &&
         last_node_.left_flg == passage_type->left_flg && last_node_.right_flg == passage_type->right_flg){
@@ -221,8 +311,80 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation::
     else{
         return false;
     }
-}
+} */
 
+void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){
+//std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
+    if(! stop_flg_){
+        if(request_update_last_node_flg){
+            updateLastNode(passage_type);
+            request_update_last_node_flg = false;
+        }
+        if(! turn_flg_){
+            if(change_node_flg_){
+                //cmd_data_pub.publish(cmd_data);
+                satisfy_conditions_flg_ = compareScenarioAndPassageType(passage_type);
+                if(satisfy_conditions_flg_){
+                    ROS_INFO("find target node");
+                    reach_target_type_cnt_++;
+                    if(reach_target_type_cnt_margin_ <= reach_target_type_cnt_){
+                        reach_target_type_cnt_ = 0;
+                        scenario_order_cnt_++;
+                        change_node_flg_ = false;
+                        updateLastNode(passage_type);
+                        int order = *std::next(target_order_itr_begin_, scenario_progress_cnt_);
+                        if(order <= scenario_order_cnt_){
+                            ROS_INFO("Robot reaches target_node!!");
+                            scenario_order_cnt_ = 0;
+                            scenario_progress_cnt_++;
+                            loadNextScenario();
+                        }
+                    }
+                }
+                else{
+                    reach_target_type_cnt_ = 0;
+                    cmd_data_pub.publish(cmd_data);
+                }
+                if (action == "turn_left" || action == "turn_right")
+                    {
+                        ROS_INFO("finish turn");
+                        turn_flg_ = false;
+                        scenario_progress_cnt_++;
+                        loadNextScenario();
+                        request_update_last_node_flg = true;
+                        //change_node_flg_ = false;
+                    }
+            }
+            else{
+                if(! compareLastNodeAndCurrentNode(passage_type)){
+                    reach_different_type_cnt_++;
+                    // cmd_data_pub.publish(cmd_data);
+                    if (action == "turn_left" || action == "turn_right")
+                    {
+                        ROS_INFO("finish turn");
+                        turn_flg_ = false;
+                        scenario_progress_cnt_++;
+                        loadNextScenario();
+                        request_update_last_node_flg = true;
+                        //change_node_flg_ = false;
+                    }
+                    
+                    if(reach_different_type_cnt_margin_ <= reach_different_type_cnt_){
+                        reach_different_type_cnt_ = 0;
+                        updateLastNode(passage_type);
+                        change_node_flg_ = true;
+                    }
+                }
+                else{
+                    reach_different_type_cnt_ = 0;
+                    cmd_data_pub.publish(cmd_data);
+                }
+            }
+        }
+    }
+    //cmd_data_pub.publish(cmd_data);
+}
+/*
 void cmdVelController::passageTypeCallback(const scenario_navigation::PassageType::ConstPtr& passage_type){
     //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
     if(! stop_flg_){
@@ -294,7 +456,7 @@ void cmdVelController::passageTypeCallback(const scenario_navigation::PassageTyp
     }
     //cmd_data_pub.publish(cmd_data);
 }
-
+*/
 void cmdVelController::turnFinishFlgCallback(const std_msgs::Bool::ConstPtr& turn_finish_flg){
     ROS_INFO("finish turn");
     turn_flg_ = false;
