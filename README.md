@@ -4,6 +4,8 @@
 
 Mecab
 ```
+sudo apt install mecab
+sudo apt install libmecab-dev
 pip3 install mecab-python3
 ```
 ```
