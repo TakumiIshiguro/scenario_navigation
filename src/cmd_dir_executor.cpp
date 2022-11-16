@@ -73,6 +73,7 @@ class cmdVelController {
         int str_list[3] = {1,0,0};
         int left_list[3] = {0,1,0};
         int right_list[3] = {0,0,1};
+        int stop_list[3] = {0,0,0};
 };
 
 cmdVelController::cmdVelController(){
@@ -116,6 +117,7 @@ void cmdVelController::loadNextScenario(void){
         std_msgs::Bool stop_flg_for_pub;
         stop_flg_for_pub.data = stop_flg_;
         stop_pub_.publish(stop_flg_for_pub);
+        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.data));
     }
     else{
         ROS_INFO("Execute next action(%s)", action.c_str());//string <=> char
@@ -168,6 +170,7 @@ void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& pas
             updateLastNode(passage_type);
             request_update_last_node_flg = false;
         }
+    }
         if(! turn_flg_){//actionがturnではない場合
             if(change_node_flg_){//道タイプが変更されている場合
                 satisfy_conditions_flg_ = compareScenarioAndPassageType(passage_type);
@@ -182,7 +185,6 @@ void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& pas
                         scenario_order_cnt_ = 0;
                         scenario_progress_cnt_++;
                         loadNextScenario();
-                    }
                     }
                 }
                 else{
@@ -199,14 +201,15 @@ void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& pas
                     ROS_INFO("Same node as last time !! ");
                 }
             }
-        }
+        }    
         else { //turn_flg_on　action中は継続
             if (!compareLastNodeAndCurrentNode(passage_type))
             {
                 turnFinish(true);  //change_flg on ターン終了まで継続
             }
-        cmd_data_pub.publish(cmd_data);//
+       
     }
+     cmd_data_pub.publish(cmd_data);//
 }
 
 void cmdVelController::turnFinish(bool change){
@@ -274,3 +277,4 @@ int main(int argc, char** argv){
 
     return 0;
 }
+
