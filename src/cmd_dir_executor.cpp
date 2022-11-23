@@ -23,7 +23,6 @@ class cmdVelController {
         void getRosParam(void);
        
         // <intersection>
-<<<<<<< HEAD
         // bool compareScenarioAndPassageType(const std_msgs::String::ConstPtr& intersection_name);
         // void loadNextScenario(void);//
         // void updateLastNode(const std_msgs::String::ConstPtr& intersection_n);
@@ -34,13 +33,6 @@ class cmdVelController {
         void updateLastNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_n);
         bool compareLastNodeAndCurrentNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
         void passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
-=======
-        bool compareScenarioAndPassageType(const std_msgs::String::ConstPtr& intersection_name);
-        void loadNextScenario(void);//
-        void updateLastNode(const std_msgs::String::ConstPtr& intersection_n);
-        bool compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name);
-        void passageTypeCallback(const std_msgs::String::ConstPtr& intersection_name);
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
         
         void turnFinish (bool change);
         void stopCallback(const std_msgs::Bool::ConstPtr& stop); //
@@ -95,12 +87,8 @@ class cmdVelController {
 
 cmdVelController::cmdVelController(){
     stop_pub_ = node_.advertise<std_msgs::Bool>("stop", 1, false);
-<<<<<<< HEAD
     //passage_type_sub_ = node_.subscribe<std_msgs::String> ("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
     passage_type_sub_ = node_.subscribe<scenario_navigation_msgs::cmd_dir_intersection>("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
-=======
-    passage_type_sub_ = node_.subscribe<std_msgs::String> ("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
     stop_sub_ = node_.subscribe<std_msgs::Bool> ("stop", 1, &cmdVelController::stopCallback, this);
     scenario_server_ = node_.advertiseService("scenario", &cmdVelController::scenarioCallback, this);
     // cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
@@ -117,20 +105,12 @@ void cmdVelController::getRosParam(void){
 }
 //<intersection>
 
-<<<<<<< HEAD
 bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//シナリオと現在のノードの比較
-=======
-bool cmdVelController::compareScenarioAndPassageType(const std_msgs::String::ConstPtr& passage_type){//シナリオと現在のノードの比較
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
     std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_); //参照渡し
     std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_); //参照渡し 今回は考慮しない
 
     //check "straight_road","3_way","cross_road","corridor"
-<<<<<<< HEAD
     if(target_type == passage_type->intersection_name){
-=======
-    if(target_type == passage_type->data){
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
 
             return true;
         }
@@ -148,11 +128,7 @@ void cmdVelController::loadNextScenario(void){
         std_msgs::Bool stop_flg_for_pub;
         stop_flg_for_pub.data = stop_flg_;
         stop_pub_.publish(stop_flg_for_pub);
-<<<<<<< HEAD
         std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
-=======
-        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.data));
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
     }
     else{
         ROS_INFO("Execute next action(%s)", action.c_str());//string <=> char
@@ -164,20 +140,12 @@ void cmdVelController::loadNextScenario(void){
 
             //if(action.find("left")){
             if(action == "turn_left"){
-<<<<<<< HEAD
                 std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
-=======
-                std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
             
             }
             //else if(action.find("right")){
             else if(action == "turn_right"){
-<<<<<<< HEAD
                 std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
-=======
-                std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.data));
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
                 
             }
         }
@@ -188,32 +156,19 @@ void cmdVelController::loadNextScenario(void){
 }
 
 // <intersection>
-<<<<<<< HEAD
 // void cmdVelController::updateLastNode(const std_msgs::String::ConstPtr& intersection_n){
 void cmdVelController::updateLastNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_n){
     ROS_INFO("update last node");
     last_node_.data = intersection_n->intersection_name;
     // node_name = last_node_.data;
     ROS_INFO("last node is (%s)",intersection_n->intersection_name.c_str());
-=======
-void cmdVelController::updateLastNode(const std_msgs::String::ConstPtr& intersection_n){
-    ROS_INFO("update last node");
-    last_node_.data = intersection_n->data;
-    // node_name = last_node_.data;
-    ROS_INFO("last node is (%s)",intersection_n->data.c_str());
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
  
     
 }
 
-<<<<<<< HEAD
 // bool cmdVelController::compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name){//前回と今回のノードの比較
 bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name){//前回と今回のノードの比較
     if(last_node_.data == intersection_name->intersection_name){
-=======
-bool cmdVelController::compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name){//前回と今回のノードの比較
-    if(last_node_.data == intersection_name->data){
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
             return true;
         }
     else{
@@ -221,12 +176,8 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const std_msgs::String::Con
     }
  }
 
-<<<<<<< HEAD
 // void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
 void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//メイン処理部
-=======
-void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
->>>>>>> ed24e5b0e501ec4fd3b5c4d8826a22d6c32b3251
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
     if(! stop_flg_){
         if(request_update_last_node_flg){
