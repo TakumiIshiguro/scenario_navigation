@@ -19,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   actionlib
   genmsg
   message_filters
+  scenario_navigation_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -259,7 +260,7 @@ target_link_libraries(
 add_executable(cmd_dir_executor
     src/cmd_dir_executor.cpp
 )
-add_dependencies(cmd_dir_executor scenario_navigation_generate_messages_cpp)
+add_dependencies(cmd_dir_executor scenario_navigation_generate_messages_cpp ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(
   cmd_dir_executor
   ${catkin_LIBRARIES}
