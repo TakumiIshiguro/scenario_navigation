@@ -265,3 +265,12 @@ target_link_libraries(
   cmd_dir_executor
   ${catkin_LIBRARIES}
 )
+
+add_executable(cmd_dir_executor_detailed
+    src/cmd_dir_executor_detailed.cpp
+)
+add_dependencies(cmd_dir_executor_detailed scenario_navigation_generate_messages_cpp ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(
+  cmd_dir_executor_detailed
+  ${catkin_LIBRARIES}
+)
