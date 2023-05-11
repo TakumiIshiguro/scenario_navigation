@@ -18,6 +18,10 @@ Install this package and msgs
 git clone https://github.com/haruyama8940/scenario_navigation_msgs.git
 git clone https://github.com/haruyama8940/scenario_navigation.git
 ```
+JSK　plugin
+```
+sudo apt install -y ros-noetic-jsk-visualization
+```
 ### Execute  
 
 - Simulator (without vison)  
