@@ -10,6 +10,7 @@
 // #include "waypoint_nav/cmd_dir_intersection.h"
 // #include "scenario_navigation_msg/cmd_dir_intersection.h"
 #include "scenario_navigation_msgs/cmd_dir_intersection.h"
+#include <std_srvs/SetBool.h>
 #include <unistd.h>
 #include <cmath>
 #include <vector>
@@ -38,6 +39,8 @@ class cmdVelController {
         void stopCallback(const std_msgs::Bool::ConstPtr& stop); //
         bool scenarioCallback(scenario_navigation::Scenario::Request& scenario,
                               scenario_navigation::Scenario::Response& res);
+        bool nextscenarioCallback(std_srvs::SetBool::Request& next_req ,
+                                  std_srvs::SetBool::Response& next_resp);
      private:
         ros::NodeHandle node_;
        
@@ -48,7 +51,7 @@ class cmdVelController {
         ros::Subscriber intersection_sub_;
         ros::Subscriber passage_type_sub_;
         ros::Subscriber stop_sub_;
-        ros::ServiceServer scenario_server_;
+        ros::ServiceServer scenario_server_,next_scenario_srv_;
 
 
         std::list<std::string> target_type_;
@@ -91,6 +94,7 @@ cmdVelController::cmdVelController(){
     passage_type_sub_ = node_.subscribe<scenario_navigation_msgs::cmd_dir_intersection>("passage_type", 1, &cmdVelController::passageTypeCallback, this); //intersection name
     stop_sub_ = node_.subscribe<std_msgs::Bool> ("stop", 1, &cmdVelController::stopCallback, this);
     scenario_server_ = node_.advertiseService("scenario", &cmdVelController::scenarioCallback, this);
+    next_scenario_srv_ = node_.advertiseService("next_scenario", &cmdVelController::nextscenarioCallback, this);
     // cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
     cmd_data_pub = node_.advertise<scenario_navigation_msgs::cmd_dir_intersection>("cmd_dir_intersection",1);
     // cmd_data.data.resize(3);
@@ -294,8 +298,8 @@ bool cmdVelController::scenarioCallback(scenario_navigation::Scenario::Request& 
     target_order_.push_back(scenario.order);
     target_direction_.push_back(scenario.direction);
     target_action_.push_back(scenario.action);
-
     std::string last_action = *std::next(target_action_.begin(), scenario_num_ - 1);//先頭を取得  scenario_num方向へすすめる
+
 // check whether scenario is loaded
     if(last_action == "stop"){
         ROS_INFO("Completed loading scenario");
@@ -329,7 +333,16 @@ bool cmdVelController::scenarioCallback(scenario_navigation::Scenario::Request& 
 
     return true;
 }
-
+bool cmdVelController::nextscenarioCallback(std_srvs::SetBool::Request& next_req,
+                              std_srvs::SetBool::Response& next_res){
+    if(next_req.data){
+        ROS_INFO("Next scenario");
+        loadNextScenario();
+    }
+    else
+        ROS_INFO("Please send true data");
+}
+    
 int main(int argc, char** argv){
     ros::init(argc, argv, "scenario_executor");
     cmdVelController cmd_vel_controller;
