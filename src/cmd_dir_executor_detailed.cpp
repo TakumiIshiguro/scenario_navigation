@@ -139,20 +139,23 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_m
     //         passage_type->intersection_name == "3_way_left")
     //         return true;
     // }
+    //突き当り
     if(target_type == "end"){
         if( passage_type->intersection_name == "3_way_center"||
             passage_type->intersection_name == "corner_left"||
-            passage_type->intersection_name == "corner_right"){
+            passage_type->intersection_name == "corner_right"||
+            passage_type->intersection_name == "dead_end"){
             return true;
             }
     }
+    //角
     if(target_type == "corner"){
         if(target_direction == "left"){
             if( passage_type->intersection_name == "3_way_center"||
                 passage_type->intersection_name == "3_way_left"||
                 passage_type->intersection_name == "corner_left"
             )
-                {
+
                 return true;
             }
         }
@@ -161,11 +164,32 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_m
                 passage_type->intersection_name == "3_way_right"||
                 passage_type->intersection_name == "corner_right"
             )
-                {
+                
                 return true;
-            }
+            
         }
-    } 
+    //通路
+    if(target_type == "corridor"){
+        if(target_direction == "left"){
+            if( passage_type->intersection_name == "3_way_center"||
+                passage_type->intersection_name == "3_way_left"||
+                passage_type->intersection_name == "corner_left"
+            )
+                
+                return true;
+            
+        }
+        else if(target_direction == "right"){
+            if( passage_type->intersection_name == "3_way_center"||
+                passage_type->intersection_name == "3_way_right"||
+                passage_type->intersection_name == "corner_right"
+            )
+                
+                return true;
+            
+        }
+    }
+
     return false;
 }
 
@@ -337,6 +361,8 @@ bool cmdVelController::nextscenarioCallback(std_srvs::SetBool::Request& next_req
                               std_srvs::SetBool::Response& next_res){
     if(next_req.data){
         ROS_INFO("Next scenario");
+        scenario_order_cnt_ = 0;
+        scenario_progress_cnt_++;
         loadNextScenario();
     }
     else
