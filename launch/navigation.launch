@@ -9,10 +9,10 @@
 
   <node name="scenario_executor" pkg="scenario_navigation" type="scenario_executor" output="screen" />
 
-  <!-- <node name="local_planner" pkg="scenario_navigation" type="local_planner" output="screen" >
+  <node name="local_planner" pkg="scenario_navigation" type="local_planner" output="screen" >
     <remap from="scan" to="vel_scan" />
     <remap from="cmd_vel" to="cmd_vel" />
-  </node> -->
+  </node>
 
   <node name="scenario_parser" pkg="scenario_navigation" type="scenario_parser.py" output="screen" >
 <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario01.txt" />
