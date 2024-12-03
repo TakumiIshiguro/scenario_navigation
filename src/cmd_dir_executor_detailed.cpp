@@ -7,6 +7,8 @@
 #include "geometry_msgs/Twist.h"
 #include "scenario_navigation/Scenario.h"
 #include "scenario_navigation/PassageType.h"
+// #include "waypoint_nav/cmd_dir_intersection.h"
+// #include "scenario_navigation_msg/cmd_dir_intersection.h"
 #include "scenario_navigation_msgs/cmd_dir_intersection.h"
 #include <std_srvs/SetBool.h>
 #include <unistd.h>
@@ -150,23 +152,22 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_m
         if(target_direction == "left"){
             if( passage_type->intersection_name == "3_way_center"||
                 passage_type->intersection_name == "3_way_left"||
-                passage_type->intersection_name == "corner_left"
-            )
+                passage_type->intersection_name == "corner_left"){
                 
                 return true;
+                }
             
         }
         else if(target_direction == "right"){
             if( passage_type->intersection_name == "3_way_center"||
                 passage_type->intersection_name == "3_way_right"||
-                passage_type->intersection_name == "corner_right"
-            )
+                passage_type->intersection_name == "corner_right"){
                 
                 return true;
-            
-        }
+                }
 
-    }
+        }
+    }  
     if(target_type == "corridor"){
         if(target_direction == "left"){
             if( passage_type->intersection_name == "3_way_center"||

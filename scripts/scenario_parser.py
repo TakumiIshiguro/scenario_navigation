@@ -9,7 +9,7 @@ from std_msgs.msg import String
 #from jsk_rviz_plugins.msg import OverlayText
 from scenario_navigation.srv import Scenario
 import MeCab
-# from jsk_rviz_plugins.msg import OverlayText
+from jsk_rviz_plugins.msg import OverlayText
 
 class ScenarioParser:
     def __init__(self):
@@ -29,10 +29,8 @@ class ScenarioParser:
                                "right", "left", "left", "back", "back"]
         # self.TYPE_ENG = ["straight_road", "3_way", "dead_end", "crossroads",
         #                  "end", "corridor", "corridor", "corridor", "corridor"]
-        # self.TYPE_ENG = ["straight_road", "3_way", "dead_end", "crossroads",
-        #                  "corridor", "corridor", "corridor", "corridor", "corridor"]
         self.TYPE_ENG = ["straight_road", "3_way", "dead_end", "crossroads",
-                         "end", "corner", "corner", "corridor", "corridor"]
+                         "corridor", "corridor", "corridor", "corridor", "corridor"]
 
         self.action_ = []
 #        self.distance_ = []

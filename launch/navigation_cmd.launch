@@ -17,7 +17,7 @@
   
   <node name="scenario_parser" pkg="scenario_navigation" type="scenario_parser.py" output="screen" >
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario02_cmd.txt" /> -->
-    <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario22.txt" />
+    <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario05.txt" />
   </node>
   <!-- 1,2,5,21 -->
   <!-- <node name="rviz" pkg="rviz" type="rviz" /> -->
