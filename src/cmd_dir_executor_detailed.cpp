@@ -125,9 +125,12 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_m
     if(target_type =="3_way"){
         if( passage_type->intersection_name == "3_way_right" || 
             passage_type->intersection_name == "3_way_center" ||
-            passage_type->intersection_name == "3_way_left"){
-           return true;
-           }
+            passage_type->intersection_name == "3_way_left" ||
+            passage_type->intersection_name == "corner_right" ||
+            passage_type->intersection_name == "corner_left"){
+
+            return true;
+            }
     }
     // if(target_type =="corner"){
     //     if( passage_type->intersection_name == "corner_left" ||
