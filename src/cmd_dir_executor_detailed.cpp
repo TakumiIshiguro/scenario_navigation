@@ -296,10 +296,16 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
             if (!compareLastNodeAndCurrentNode(passage_type))
             {
                 turnFinish(true);  //change_flg on ターン終了まで継続
-            }
-       
+            } 
+        }
+    if (passage_type->intersection_name == "dead_end") {
+        ROS_INFO("Dead end detected. Stopping robot.");
+        std_msgs::Bool stop_flg_for_pub;
+        stop_flg_for_pub.data = stop_flg_;
+        stop_pub_.publish(stop_flg_for_pub);
+        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
     }
-     cmd_data_pub.publish(cmd_data);//
+    cmd_data_pub.publish(cmd_data);//
 }
 
 void cmdVelController::turnFinish(bool change){
