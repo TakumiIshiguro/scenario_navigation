@@ -10,6 +10,7 @@
 #include "scenario_navigation_msgs/cmd_dir_intersection.h"
 #include <std_srvs/SetBool.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -28,12 +29,18 @@ class cmdVelController {
         // bool compareLastNodeAndCurrentNode(const std_msgs::String::ConstPtr& intersection_name);
         // void passageTypeCallback(const std_msgs::String::ConstPtr& intersection_name);
         bool compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
+        bool directionAvailable(const std::string& intersection_name, const std::string& direction);
+        bool nextTurnFeasibleAt(const std::string& intersection_name);
+        std::vector<std::string> currentTargetLabels(void);
+        void publishTargetLabels(void);
         void loadNextScenario(void);//
         void updateLastNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_n);
         bool compareLastNodeAndCurrentNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
         void passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
         
         void turnFinish (bool change);
+        void printStatus(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type);
+        void cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg);
         void stopCallback(const std_msgs::Bool::ConstPtr& stop); //
         bool scenarioCallback(scenario_navigation::Scenario::Request& scenario,
                               scenario_navigation::Scenario::Response& res);
@@ -46,9 +53,11 @@ class cmdVelController {
         // <intersection>
         ros::Publisher stop_pub_;
         ros::Publisher cmd_data_pub;
+        ros::Publisher target_labels_pub_;
         ros::Subscriber intersection_sub_;
         ros::Subscriber passage_type_sub_;
         ros::Subscriber stop_sub_;
+        ros::Subscriber cmd_vel_sub_;
         ros::ServiceServer scenario_server_,next_scenario_srv_;
 
 
@@ -72,6 +81,22 @@ class cmdVelController {
         int reach_different_type_cnt_ = 0;
         int reach_target_type_cnt_margin_ = 6;
         int reach_different_type_cnt_margin_ = 6;
+        // A real turn alone takes several seconds, so any apparent node
+        // change/target match this soon after a step starts is almost
+        // certainly a stale reading from just before the transition (or
+        // noise), not genuine progress. passage_type is ignored entirely
+        // until this many seconds of actual robot motion (see
+        // cmdVelCallback() below, not wall-clock time) have elapsed since
+        // the current step began (see loadNextScenario() and
+        // passageTypeCallback()). Counting only moving time means a stop
+        // for any reason -- e.g. corridor_classifier "collecting temporal
+        // context" after a turn -- does not silently eat into the budget.
+        double step_min_duration_sec_ = 8.0;
+        double step_moving_duration_sec_ = 0.0;
+        ros::Time last_cmd_vel_stamp_;
+        bool have_last_cmd_vel_stamp_ = false;
+        double moving_linear_threshold_ = 0.02;
+        double moving_angular_threshold_ = 0.02;
         float rotate_rad_ = 0.0;
         bool turn_flg_ = false;
         bool change_node_flg_ = false;
@@ -95,6 +120,15 @@ cmdVelController::cmdVelController(){
     next_scenario_srv_ = node_.advertiseService("next_scenario", &cmdVelController::nextscenarioCallback, this);
     // cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
     cmd_data_pub = node_.advertise<scenario_navigation_msgs::cmd_dir_intersection>("cmd_dir_intersection",1);
+    // Comma-separated intersection_name values that currently satisfy the
+    // active scenario step's target (empty when there is none, e.g. mid-turn
+    // or stopped). Lets a consumer such as corridor_classifier's direction
+    // debouncer bypass its hold period the instant a matching label is
+    // detected, instead of risking the target being missed or delayed.
+    target_labels_pub_ = node_.advertise<std_msgs::String>("scenario_target_labels", 1);
+    // Tracks actual robot motion so the step grace period above counts
+    // only moving time, not wall-clock time.
+    cmd_vel_sub_ = node_.subscribe<geometry_msgs::Twist>("cmd_vel", 1, &cmdVelController::cmdVelCallback, this);
     // cmd_data.data.resize(3);
 
     // updateLastNode();
@@ -104,96 +138,132 @@ cmdVelController::cmdVelController(){
 void cmdVelController::getRosParam(void){
     SCENARIO_MAX = 10;
     node_.getParam("scenario_executor/scenario_max", SCENARIO_MAX);
+    step_min_duration_sec_ = 8.0;
+    node_.getParam("scenario_executor/step_min_duration_sec", step_min_duration_sec_);
+    moving_linear_threshold_ = 0.02;
+    node_.getParam("scenario_executor/moving_linear_threshold", moving_linear_threshold_);
+    moving_angular_threshold_ = 0.02;
+    node_.getParam("scenario_executor/moving_angular_threshold", moving_angular_threshold_);
+}
+
+void cmdVelController::cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg){
+    ros::Time now = ros::Time::now();
+    bool moving = std::abs(msg->linear.x) > moving_linear_threshold_ ||
+                  std::abs(msg->angular.z) > moving_angular_threshold_;
+    if(have_last_cmd_vel_stamp_ && moving){
+        step_moving_duration_sec_ += (now - last_cmd_vel_stamp_).toSec();
+    }
+    last_cmd_vel_stamp_ = now;
+    have_last_cmd_vel_stamp_ = true;
 }
 //<intersection>
 
-bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//シナリオと現在のノードの比較
-    std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_); //参照渡し
-    std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_); //参照渡し 今回は考慮しない
+// Whether a passage of the given intersection type actually has an exit in
+// the given direction (left/right). Used so that, e.g., a scenario step
+// "go straight until end, then turn left" does not treat a corner_right
+// (which has no left branch at all) as satisfying "end".
+bool cmdVelController::directionAvailable(const std::string& intersection_name, const std::string& direction){
+    if(direction == "left"){
+        return intersection_name == "corner_left" ||
+               intersection_name == "3_way_left" ||
+               intersection_name == "3_way_center" ||
+               intersection_name == "cross_road";
+    }
+    if(direction == "right"){
+        return intersection_name == "corner_right" ||
+               intersection_name == "3_way_right" ||
+               intersection_name == "3_way_center" ||
+               intersection_name == "cross_road";
+    }
+    return true;
+}
 
-    //check "straight_road","3_way","cross_road","corridor"
-    // if(target_type == passage_type->intersection_name){
-
-    //         return true;
-    //     }
-    //直線の道
-    if(target_type == "straight_road"){
-        if(target_type == passage_type->intersection_name)
+// Whether the scenario step immediately after the current one, if it is a
+// turn, is actually possible at this intersection type. Steps that are not
+// followed by a turn (or that are the last step) are always feasible here.
+bool cmdVelController::nextTurnFeasibleAt(const std::string& intersection_name){
+    int next_step = scenario_progress_cnt_ + 1;
+    if(next_step >= scenario_num_){
         return true;
     }
-    //三叉路　右，中央，左
-    if(target_type =="3_way"){
-        if( passage_type->intersection_name == "3_way_right" || 
-            passage_type->intersection_name == "3_way_center" ||
-            passage_type->intersection_name == "3_way_left" ||
-            passage_type->intersection_name == "corner_right" ||
-            passage_type->intersection_name == "corner_left"){
+    std::string next_action = *std::next(target_action_itr_begin_, next_step);
+    if(next_action == "turn_left"){
+        return directionAvailable(intersection_name, "left");
+    }
+    if(next_action == "turn_right"){
+        return directionAvailable(intersection_name, "right");
+    }
+    return true;
+}
 
-            return true;
-            }
+// The set of intersection_name values that currently satisfy the active
+// scenario step's target (its target_type/target_direction), after also
+// filtering out anything whose next-step turn (if any) is not actually
+// possible there. Empty when the current step has no type to wait for
+// (e.g. a turn or stop step). This is the single source of truth behind
+// both compareScenarioAndPassageType() and the published
+// scenario_target_labels topic, so they can never disagree.
+std::vector<std::string> cmdVelController::currentTargetLabels(void){
+    std::vector<std::string> labels;
+    if(scenario_num_ == 0 || scenario_progress_cnt_ >= scenario_num_){
+        return labels;
     }
-    // if(target_type =="corner"){
-    //     if( passage_type->intersection_name == "corner_left" ||
-    //         passage_type->intersection_name == "corner_right"|| 
-    //         passage_type->intersection_name == "3_way_right" || 
-    //         passage_type->intersection_name == "3_way_center"||
-    //         passage_type->intersection_name == "3_way_left")
-    //         return true;
-    // }
-    if(target_type == "end"){
-        if( passage_type->intersection_name == "3_way_center"||
-            passage_type->intersection_name == "corner_left"||
-            passage_type->intersection_name == "corner_right"||
-            passage_type->intersection_name == "dead_end"){
-            
-            return true;
-            }
+    std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_);
+    std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_);
+
+    if(target_type == "straight_road"){
+        labels.push_back("straight_road");
     }
-    if(target_type == "corner"){
+    else if(target_type == "3_way"){
+        labels = {"3_way_right","3_way_center","3_way_left","corner_right","corner_left"};
+    }
+    else if(target_type == "end"){
+        for(const std::string& candidate : {"3_way_center","corner_left","corner_right","dead_end"}){
+            if(nextTurnFeasibleAt(candidate)) labels.push_back(candidate);
+        }
+    }
+    else if(target_type == "corner" || target_type == "corridor"){
         if(target_direction == "left"){
-            if( passage_type->intersection_name == "3_way_center"||
-                passage_type->intersection_name == "3_way_left"||
-                passage_type->intersection_name == "corner_left"
-            )
-                
-                return true;
-            
+            labels = {"3_way_center","3_way_left","corner_left"};
         }
         else if(target_direction == "right"){
-            if( passage_type->intersection_name == "3_way_center"||
-                passage_type->intersection_name == "3_way_right"||
-                passage_type->intersection_name == "corner_right"
-            )
-                
-                return true;
-            
+            labels = {"3_way_center","3_way_right","corner_right"};
         }
+        else{
+            // No direction word in the sentence (e.g. "次の角まで直進"):
+            // accept a corner or 3-way node regardless of which way it
+            // turns, instead of never matching anything -- but still only
+            // if the next step's turn (if any) is actually possible there.
+            for(const std::string& candidate :
+                {"corner_left","corner_right","3_way_left","3_way_right","3_way_center"}){
+                if(nextTurnFeasibleAt(candidate)) labels.push_back(candidate);
+            }
+        }
+    }
+    return labels;
+}
 
+bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//シナリオと現在のノードの比較
+    std::vector<std::string> labels = currentTargetLabels();
+    return std::find(labels.begin(), labels.end(), passage_type->intersection_name) != labels.end();
+}
+
+void cmdVelController::publishTargetLabels(void){
+    std::vector<std::string> labels = currentTargetLabels();
+    std_msgs::String message;
+    for(size_t i = 0; i < labels.size(); ++i){
+        if(i > 0) message.data += ",";
+        message.data += labels[i];
     }
-    if(target_type == "corridor"){
-        if(target_direction == "left"){
-            if( passage_type->intersection_name == "3_way_center"||
-                passage_type->intersection_name == "3_way_left"||
-                passage_type->intersection_name == "corner_left"
-            )
-                
-                return true;
-            
-        }
-        else if(target_direction == "right"){
-            if( passage_type->intersection_name == "3_way_center"||
-                passage_type->intersection_name == "3_way_right"||
-                passage_type->intersection_name == "corner_right"
-            )
-                
-                return true;
-            
-        }
-    }
-    return false;
+    target_labels_pub_.publish(message);
 }
 
 void cmdVelController::loadNextScenario(void){
+    // Reset the moving-time budget for the new step. Drop the pending
+    // cmd_vel interval too, so time spent between the last cmd_vel message
+    // and this step's start is never attributed to the new step.
+    step_moving_duration_sec_ = 0.0;
+    have_last_cmd_vel_stamp_ = false;
     // std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
     action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
 
@@ -255,6 +325,34 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation_m
 // void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
 void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//メイン処理部
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
+    if(passage_type->intersection_name == "turning"){
+        // corridor_classifier reports "turning" independently of this
+        // executor's own turn_flg_ state (it is driven by /cmd_vel, not by
+        // which scenario step is loaded). It is not a real corridor shape,
+        // so it must never be treated as "the node changed": doing so
+        // used to make turnFinish() fire the instant a turn *started*
+        // (since it looked like a brand new node), skipping straight to
+        // the next scenario step while the robot was still mid-turn.
+        // Just keep publishing whatever cmd_dir the current step already
+        // loaded and wait for a real (non-turning) passage type.
+        cmd_data_pub.publish(cmd_data);
+        publishTargetLabels();
+        printStatus(passage_type);
+        return;
+    }
+    if(step_moving_duration_sec_ < step_min_duration_sec_){
+        // A real turn alone takes several seconds, so any apparent node
+        // change or target match this soon after the current step began
+        // is almost certainly a stale reading from just before the
+        // transition (or noise), not genuine progress. Ignore passage_type
+        // entirely -- do not touch last_node_/change_node_flg_/turn_flg_
+        // state or compare against the target -- until this grace period
+        // has elapsed, so a step can never advance in an instant.
+        cmd_data_pub.publish(cmd_data);
+        publishTargetLabels();
+        printStatus(passage_type);
+        return;
+    }
     if(! stop_flg_){
         if(request_update_last_node_flg){
             updateLastNode(passage_type);
@@ -305,7 +403,68 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
         stop_pub_.publish(stop_flg_for_pub);
         std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
     }
+    else if (!stop_flg_) {
+        // The block above only ever latches cmd_dir to stop_list; nothing
+        // else restores it. If an earlier (possibly spurious, single-frame)
+        // dead_end reading set it and the scenario has not since advanced
+        // to a new loadNextScenario() call, cmd_dir would otherwise stay
+        // stuck at [0, 0, 0] forever even once the passage type moves on.
+        // Re-derive it from the currently loaded action whenever we are not
+        // actually looking at a dead end.
+        if (turn_flg_) {
+            if (action == "turn_left") {
+                std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
+            }
+            else if (action == "turn_right") {
+                std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
+            }
+        }
+        else {
+            std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.cmd_dir));
+        }
+    }
     cmd_data_pub.publish(cmd_data);//
+    publishTargetLabels();
+    printStatus(passage_type);
+}
+
+// Print the executor's current scenario-progress state: which step we are
+// on, what that step is waiting for, and the flags driving the state
+// machine above, so the current situation can be read directly from stdout
+// instead of inferred from the scattered ROS_INFO lines.
+void cmdVelController::printStatus(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){
+    if(scenario_num_ == 0){
+        ROS_INFO("[STATUS] no scenario loaded yet");
+        return;
+    }
+    int step = scenario_progress_cnt_;
+    if(step >= scenario_num_){
+        ROS_INFO("[STATUS] scenario finished (step %d/%d)", scenario_num_, scenario_num_);
+        return;
+    }
+    std::string step_type = *std::next(target_type_itr_begin_, step);
+    int step_order = *std::next(target_order_itr_begin_, step);
+    std::string step_direction = *std::next(target_direction_itr_begin_, step);
+    std::string step_action = *std::next(target_action_itr_begin_, step);
+
+    bool in_grace_period = step_moving_duration_sec_ < step_min_duration_sec_;
+
+    std::string mode = in_grace_period
+                       ? "STEP_GRACE_PERIOD"
+                       : turn_flg_ ? "TURNING"
+                       : stop_flg_ ? "STOPPED"
+                       : change_node_flg_ ? "AT_NEW_NODE(comparing)"
+                       : "WAITING_FOR_NODE_CHANGE";
+
+    ROS_INFO(
+        "[STATUS] step=%d/%d action=%s target_type=%s target_direction=%s "
+        "order=%d/%d mode=%s step_moving_time=%.1f/%.1fs | current_node=%s last_node=%s",
+        step + 1, scenario_num_,
+        step_action.c_str(), step_type.c_str(), step_direction.c_str(),
+        scenario_order_cnt_, step_order,
+        mode.c_str(), step_moving_duration_sec_, step_min_duration_sec_,
+        passage_type->intersection_name.c_str(), last_node_.data.c_str()
+    );
 }
 
 void cmdVelController::turnFinish(bool change){

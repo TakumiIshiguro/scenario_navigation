@@ -55,25 +55,25 @@ find_package(catkin REQUIRED COMPONENTS
 ##   * uncomment the generate_messages entry below
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
-## Generate messages in the 'msg' folder
+# Generate messages in the 'msg' folder
 add_message_files(
   FILES
     PassageType.msg
-    BoundingBox.msg
-    BoundingBoxes.msg
+    # BoundingBox.msg
+    # BoundingBoxes.msg
 )
 
-## Generate services in the 'srv' folder
+# Generate services in the 'srv' folder
  add_service_files(
    FILES
    Scenario.srv
  )
 
 ## Generate actions in the 'action' folder
- add_action_files(
-    FILES
-    BoundingBoxes.action
- )
+#  add_action_files(
+#     FILES
+#     BoundingBoxes.action
+#  )
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
@@ -219,52 +219,52 @@ include_directories(
 # catkin_add_nosetests(test)
 
 
-add_executable(local_planner
-    src/local_planner.cpp
-)
-add_dependencies(local_planner scenario_navigation_generate_messages_cpp)
-target_link_libraries(
-  local_planner
-  ${catkin_LIBRARIES}
-)
+# add_executable(local_planner
+#     src/local_planner.cpp
+# )
+# add_dependencies(local_planner scenario_navigation_generate_messages_cpp)
+# target_link_libraries(
+#   local_planner
+#   ${catkin_LIBRARIES}
+# )
 
 
-add_executable(passage_recognition
-    src/passage_recognition.cpp
-)
-add_dependencies(passage_recognition scenario_navigation_generate_messages_cpp)
-target_link_libraries(
-  passage_recognition
-  ${catkin_LIBRARIES}
-)
+# add_executable(passage_recognition
+#     src/passage_recognition.cpp
+# )
+# add_dependencies(passage_recognition scenario_navigation_generate_messages_cpp)
+# target_link_libraries(
+#   passage_recognition
+#   ${catkin_LIBRARIES}
+# )
 
 
-add_executable(passage_recognition_with_yolo
-    src/passage_recognition_with_yolo.cpp
-)
-add_dependencies(passage_recognition_with_yolo scenario_navigation_generate_messages_cpp)
-target_link_libraries(
-  passage_recognition_with_yolo
-  ${catkin_LIBRARIES}
-)
+# add_executable(passage_recognition_with_yolo
+#     src/passage_recognition_with_yolo.cpp
+# )
+# add_dependencies(passage_recognition_with_yolo scenario_navigation_generate_messages_cpp)
+# target_link_libraries(
+#   passage_recognition_with_yolo
+#   ${catkin_LIBRARIES}
+# )
 
 
-add_executable(scenario_executor
-    src/scenario_executor.cpp
-)
-add_dependencies(scenario_executor scenario_navigation_generate_messages_cpp)
-target_link_libraries(
-  scenario_executor
-  ${catkin_LIBRARIES}
-)
-add_executable(cmd_dir_executor
-    src/cmd_dir_executor.cpp
-)
-add_dependencies(cmd_dir_executor scenario_navigation_generate_messages_cpp ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-target_link_libraries(
-  cmd_dir_executor
-  ${catkin_LIBRARIES}
-)
+# add_executable(scenario_executor
+#     src/scenario_executor.cpp
+# )
+# add_dependencies(scenario_executor scenario_navigation_generate_messages_cpp)
+# target_link_libraries(
+#   scenario_executor
+#   ${catkin_LIBRARIES}
+# )
+# add_executable(cmd_dir_executor
+#     src/cmd_dir_executor.cpp
+# )
+# add_dependencies(cmd_dir_executor scenario_navigation_generate_messages_cpp ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# target_link_libraries(
+#   cmd_dir_executor
+#   ${catkin_LIBRARIES}
+# )
 
 add_executable(cmd_dir_executor_detailed
     src/cmd_dir_executor_detailed.cpp
