@@ -7,11 +7,15 @@
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario21.txt" /> -->
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario22.txt" /> -->
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario24.txt" /> -->
+    <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario50.txt" /> -->
 
-    <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario27.txt" />
+    <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario27.txt" /> -->
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario31.txt" /> -->
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario36.txt" /> -->
     <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario37.txt" /> -->
+
+    <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario16.txt" />
+    <!-- <param name="scenario_path" value="$(find scenario_navigation)/config/Scenarios/scenario17.txt" /> -->
 
   </node>
 </launch>
