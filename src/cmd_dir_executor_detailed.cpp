@@ -30,8 +30,11 @@ class cmdVelController {
         // void passageTypeCallback(const std_msgs::String::ConstPtr& intersection_name);
         bool compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
         bool directionAvailable(const std::string& intersection_name, const std::string& direction);
+        bool nextTurnFeasibleAtStep(int step, const std::string& intersection_name);
         bool nextTurnFeasibleAt(const std::string& intersection_name);
+        std::vector<std::string> targetLabelsForStep(int step);
         std::vector<std::string> currentTargetLabels(void);
+        std::vector<std::string> activeTargetLabels(void);
         void publishTargetLabels(void);
         void loadNextScenario(void);//
         void updateLastNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_n);
@@ -41,6 +44,8 @@ class cmdVelController {
         void turnFinish (bool change);
         void printStatus(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type);
         void cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg);
+        void careAvoidanceCallback(const std_msgs::Bool::ConstPtr& msg);
+        bool careAvoidanceActive(void);
         void stopCallback(const std_msgs::Bool::ConstPtr& stop); //
         bool scenarioCallback(scenario_navigation::Scenario::Request& scenario,
                               scenario_navigation::Scenario::Response& res);
@@ -58,6 +63,7 @@ class cmdVelController {
         ros::Subscriber passage_type_sub_;
         ros::Subscriber stop_sub_;
         ros::Subscriber cmd_vel_sub_;
+        ros::Subscriber care_avoidance_sub_;
         ros::ServiceServer scenario_server_,next_scenario_srv_;
 
 
@@ -76,23 +82,82 @@ class cmdVelController {
         std::string action;
         int scenario_num_ = 0;
         int scenario_progress_cnt_ = 0;
-        int scenario_order_cnt_ = 1;
+        // Count of matching landmarks passed so far on the current step
+        // (incremented, then compared against the step's order, in
+        // passageTypeCallback()). Starts at 0 -- no landmark passed yet --
+        // so an order-N step completes at exactly the Nth matching
+        // landmark. Reset to 0 on every step change (see the goal-reached
+        // branch and nextscenarioCallback()); the initializer here is what
+        // the first step of a scenario uses.
+        int scenario_order_cnt_ = 0;
         int reach_target_type_cnt_ = 0;
         int reach_different_type_cnt_ = 0;
         int reach_target_type_cnt_margin_ = 6;
         int reach_different_type_cnt_margin_ = 6;
-        // A real turn alone takes several seconds, so any apparent node
-        // change/target match this soon after a step starts is almost
-        // certainly a stale reading from just before the transition (or
-        // noise), not genuine progress. passage_type is ignored entirely
-        // until this many seconds of actual robot motion (see
-        // cmdVelCallback() below, not wall-clock time) have elapsed since
-        // the current step began (see loadNextScenario() and
-        // passageTypeCallback()). Counting only moving time means a stop
-        // for any reason -- e.g. corridor_classifier "collecting temporal
-        // context" after a turn -- does not silently eat into the budget.
-        double step_min_duration_sec_ = 8.0;
+        // Consecutive "dead_end" /passage_type readings. A sustained
+        // dead_end means the robot is driving at a wall (a wrong turn, or
+        // the corridor really ends), so once this reaches
+        // dead_end_stop_streak_ the robot is held stopped (see the top of
+        // passageTypeCallback()). Counted consecutively (any non-dead_end
+        // reading resets it), so a stray dead_end frame in a turn's label
+        // sweep never triggers it -- but a genuine dead_end held for the
+        // whole streak stops the robot even mid-turn.
+        int dead_end_streak_ = 0;
+        int dead_end_stop_streak_ = 8;
+        // True while the robot is being held stopped by the dead_end streak
+        // above. Not a scenario abort: the moment /passage_type reports any
+        // other corridor type, the hold is released and the current step's
+        // command is restored, so driving resumes.
+        bool dead_end_stopped_ = false;
+        // How long the robot has actually been moving (see cmdVelCallback()
+        // below, not wall-clock time) since the current step began (reset
+        // in loadNextScenario()). Status telemetry only.
         double step_moving_duration_sec_ = 0.0;
+        // Set when the reading latched into last_node_ right as the grace
+        // period above ends already satisfies the current step's target
+        // (see passageTypeCallback()'s request_update_last_node_flg block).
+        // Accepting that immediately would trust a single frame, which can
+        // be a transient/stale reading from the tail of a turn rather than
+        // a genuine arrival. Instead it must keep reading the same way for
+        // immediate_match_confirm_sec_ of further motion before it counts;
+        // if it changes before then, it is treated as an ordinary node
+        // change instead (see immediate_match_duration_sec_'s accumulation
+        // in cmdVelCallback()).
+        bool immediate_match_flg_ = false;
+        double immediate_match_duration_sec_ = 0.0;
+        double immediate_match_confirm_sec_ = 2.0;
+        // Minimum-turn-time floor: a turn step cannot complete on a
+        // "straight_road" reading (see the turn branch of
+        // passageTypeCallback()) until turn_active_duration_sec_ below
+        // reaches this. Raise scenario_executor/turning_min_duration_sec if
+        // turns end too early; lower it if the robot over-rotates.
+        double turning_min_duration_sec_ = 5.0;
+        // The floor above is measured from when the robot *actually starts
+        // rotating*, not from when the turn step loaded -- the downstream
+        // controller takes a while to ramp the turn up, and counting that
+        // lag would end turns early. turn_started_ latches true the first
+        // time |cmd_vel.angular.z| reaches turn_start_angular_speed_rad_s_
+        // during a turn step (see cmdVelCallback()); turn_active_duration_sec_
+        // then accumulates moving time from that point on (it keeps counting
+        // even if angular.z later dips, so it cannot stall). Both reset per
+        // step in loadNextScenario().
+        double turn_start_angular_speed_rad_s_ = 0.10;
+        bool turn_started_ = false;
+        double turn_active_duration_sec_ = 0.0;
+        // vnm_ros/CARE's obstacle-avoidance-active flag (std_msgs/Bool, e.g.
+        // /vnm/care_avoidance_active). /cmd_vel is the final velocity, so it
+        // also carries CARE's repulsive steering -- which can spin the robot
+        // before the commanded scenario turn has really begun. While this
+        // reads true, turn_started_ above is not allowed to latch. Disabled
+        // (no subscriber) when scenario_executor/care_avoidance_topic is
+        // empty; harmless when nothing publishes it (a stale reading older
+        // than care_avoidance_stale_timeout_sec_ is ignored, so a dropped
+        // "true" cannot suppress the latch forever, and with no message at
+        // all the latch uses cmd_vel alone).
+        bool care_avoidance_active_ = false;
+        bool have_care_avoidance_ = false;
+        ros::Time care_avoidance_stamp_;
+        double care_avoidance_stale_timeout_sec_ = 1.0;
         ros::Time last_cmd_vel_stamp_;
         bool have_last_cmd_vel_stamp_ = false;
         double moving_linear_threshold_ = 0.02;
@@ -121,10 +186,13 @@ cmdVelController::cmdVelController(){
     // cmd_data_pub = node_.advertise<std_msgs::Int8MultiArray >("cmd_dir", 1);
     cmd_data_pub = node_.advertise<scenario_navigation_msgs::cmd_dir_intersection>("cmd_dir_intersection",1);
     // Comma-separated intersection_name values that currently satisfy the
-    // active scenario step's target (empty when there is none, e.g. mid-turn
-    // or stopped). Lets a consumer such as corridor_classifier's direction
-    // debouncer bypass its hold period the instant a matching label is
-    // detected, instead of risking the target being missed or delayed.
+    // active target (empty when there is none, e.g. stopped). While a turn
+    // step is active this looks ahead to the step the turn leads into
+    // (see activeTargetLabels()), so a consumer such as corridor_classifier
+    // can recognize that destination even mid-turn and publish it instead
+    // of "turning" the moment it is visible (see turning_gate.py /
+    // corridor_classifier_node.py), instead of always waiting for the
+    // physical turn to finish.
     target_labels_pub_ = node_.advertise<std_msgs::String>("scenario_target_labels", 1);
     // Tracks actual robot motion so the step grace period above counts
     // only moving time, not wall-clock time.
@@ -138,23 +206,77 @@ cmdVelController::cmdVelController(){
 void cmdVelController::getRosParam(void){
     SCENARIO_MAX = 10;
     node_.getParam("scenario_executor/scenario_max", SCENARIO_MAX);
-    step_min_duration_sec_ = 8.0;
-    node_.getParam("scenario_executor/step_min_duration_sec", step_min_duration_sec_);
     moving_linear_threshold_ = 0.02;
     node_.getParam("scenario_executor/moving_linear_threshold", moving_linear_threshold_);
     moving_angular_threshold_ = 0.02;
     node_.getParam("scenario_executor/moving_angular_threshold", moving_angular_threshold_);
+    immediate_match_confirm_sec_ = 2.0;
+    node_.getParam("scenario_executor/immediate_match_confirm_sec", immediate_match_confirm_sec_);
+    turning_min_duration_sec_ = 5.0;
+    node_.getParam("scenario_executor/turning_min_duration_sec", turning_min_duration_sec_);
+    turn_start_angular_speed_rad_s_ = 0.10;
+    node_.getParam("scenario_executor/turn_start_angular_speed_rad_s", turn_start_angular_speed_rad_s_);
+    dead_end_stop_streak_ = 8;
+    node_.getParam("scenario_executor/dead_end_stop_streak", dead_end_stop_streak_);
+    care_avoidance_stale_timeout_sec_ = 1.0;
+    node_.getParam("scenario_executor/care_avoidance_stale_timeout_sec", care_avoidance_stale_timeout_sec_);
+    // Defaults to vnm_ros/CARE's avoidance-active topic; harmless when CARE
+    // is not running (no publisher -> careAvoidanceActive() stays false and
+    // the turn-start latch uses cmd_vel alone). Set the param to "" to
+    // disable the subscriber entirely.
+    std::string care_avoidance_topic = "/vnm/care_avoidance_active";
+    node_.getParam("scenario_executor/care_avoidance_topic", care_avoidance_topic);
+    if(! care_avoidance_topic.empty()){
+        care_avoidance_sub_ = node_.subscribe<std_msgs::Bool>(
+            care_avoidance_topic, 1, &cmdVelController::careAvoidanceCallback, this);
+    }
 }
 
 void cmdVelController::cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg){
     ros::Time now = ros::Time::now();
     bool moving = std::abs(msg->linear.x) > moving_linear_threshold_ ||
                   std::abs(msg->angular.z) > moving_angular_threshold_;
+    // Start the minimum-turn-time clock only once the robot is genuinely
+    // rotating for the commanded turn, not when the turn step loaded (see
+    // turn_started_) and not while CARE is steering around an obstacle
+    // (that angular velocity is on /cmd_vel too but is not the turn).
+    if(turn_flg_ && ! turn_started_ &&
+       std::abs(msg->angular.z) >= turn_start_angular_speed_rad_s_ &&
+       ! careAvoidanceActive()){
+        turn_started_ = true;
+    }
     if(have_last_cmd_vel_stamp_ && moving){
-        step_moving_duration_sec_ += (now - last_cmd_vel_stamp_).toSec();
+        double dt = (now - last_cmd_vel_stamp_).toSec();
+        step_moving_duration_sec_ += dt;
+        if(immediate_match_flg_){
+            immediate_match_duration_sec_ += dt;
+        }
+        if(turn_started_){
+            turn_active_duration_sec_ += dt;
+        }
     }
     last_cmd_vel_stamp_ = now;
     have_last_cmd_vel_stamp_ = true;
+}
+
+void cmdVelController::careAvoidanceCallback(const std_msgs::Bool::ConstPtr& msg){
+    care_avoidance_active_ = msg->data;
+    have_care_avoidance_ = true;
+    care_avoidance_stamp_ = ros::Time::now();
+}
+
+// True only while a fresh reading says CARE is actively steering around an
+// obstacle. No subscriber / no message yet / stale message -> false, so
+// this never suppresses turn-start detection unless CARE is genuinely,
+// currently active.
+bool cmdVelController::careAvoidanceActive(void){
+    if(! have_care_avoidance_){
+        return false;
+    }
+    if((ros::Time::now() - care_avoidance_stamp_).toSec() > care_avoidance_stale_timeout_sec_){
+        return false;
+    }
+    return care_avoidance_active_;
 }
 //<intersection>
 
@@ -178,11 +300,11 @@ bool cmdVelController::directionAvailable(const std::string& intersection_name, 
     return true;
 }
 
-// Whether the scenario step immediately after the current one, if it is a
+// Whether the scenario step immediately after the given one, if it is a
 // turn, is actually possible at this intersection type. Steps that are not
 // followed by a turn (or that are the last step) are always feasible here.
-bool cmdVelController::nextTurnFeasibleAt(const std::string& intersection_name){
-    int next_step = scenario_progress_cnt_ + 1;
+bool cmdVelController::nextTurnFeasibleAtStep(int step, const std::string& intersection_name){
+    int next_step = step + 1;
     if(next_step >= scenario_num_){
         return true;
     }
@@ -196,20 +318,21 @@ bool cmdVelController::nextTurnFeasibleAt(const std::string& intersection_name){
     return true;
 }
 
-// The set of intersection_name values that currently satisfy the active
-// scenario step's target (its target_type/target_direction), after also
-// filtering out anything whose next-step turn (if any) is not actually
-// possible there. Empty when the current step has no type to wait for
-// (e.g. a turn or stop step). This is the single source of truth behind
-// both compareScenarioAndPassageType() and the published
-// scenario_target_labels topic, so they can never disagree.
-std::vector<std::string> cmdVelController::currentTargetLabels(void){
+bool cmdVelController::nextTurnFeasibleAt(const std::string& intersection_name){
+    return nextTurnFeasibleAtStep(scenario_progress_cnt_, intersection_name);
+}
+
+// The set of intersection_name values that satisfy the given step's target
+// (its target_type/target_direction), after also filtering out anything
+// whose next-step turn (if any) is not actually possible there. Empty when
+// that step has no type to wait for (e.g. a turn or stop step).
+std::vector<std::string> cmdVelController::targetLabelsForStep(int step){
     std::vector<std::string> labels;
-    if(scenario_num_ == 0 || scenario_progress_cnt_ >= scenario_num_){
+    if(scenario_num_ == 0 || step < 0 || step >= scenario_num_){
         return labels;
     }
-    std::string target_type = *std::next(target_type_itr_begin_, scenario_progress_cnt_);
-    std::string target_direction = *std::next(target_direction_itr_begin_, scenario_progress_cnt_);
+    std::string target_type = *std::next(target_type_itr_begin_, step);
+    std::string target_direction = *std::next(target_direction_itr_begin_, step);
 
     if(target_type == "straight_road"){
         labels.push_back("straight_road");
@@ -219,7 +342,7 @@ std::vector<std::string> cmdVelController::currentTargetLabels(void){
     }
     else if(target_type == "end"){
         for(const std::string& candidate : {"3_way_center","corner_left","corner_right","dead_end"}){
-            if(nextTurnFeasibleAt(candidate)) labels.push_back(candidate);
+            if(nextTurnFeasibleAtStep(step, candidate)) labels.push_back(candidate);
         }
     }
     else if(target_type == "corner" || target_type == "corridor"){
@@ -236,9 +359,38 @@ std::vector<std::string> cmdVelController::currentTargetLabels(void){
             // if the next step's turn (if any) is actually possible there.
             for(const std::string& candidate :
                 {"corner_left","corner_right","3_way_left","3_way_right","3_way_center"}){
-                if(nextTurnFeasibleAt(candidate)) labels.push_back(candidate);
+                if(nextTurnFeasibleAtStep(step, candidate)) labels.push_back(candidate);
             }
         }
+    }
+    return labels;
+}
+
+// The set of intersection_name values that currently satisfy the active
+// scenario step's target. This is the single source of truth behind
+// compareScenarioAndPassageType(), which only ever runs while turn_flg_ is
+// false (see passageTypeCallback()), so it is always this step, never a
+// lookahead.
+std::vector<std::string> cmdVelController::currentTargetLabels(void){
+    return targetLabelsForStep(scenario_progress_cnt_);
+}
+
+// Like currentTargetLabels(), but while a turn step is active (turn_flg_),
+// the turn itself has no type to wait for, so this looks ahead to the step
+// the turn leads into instead. Published on scenario_target_labels so
+// corridor_classifier can, while its own turning gate is active, publish a
+// recognized destination label instead of "turning" (see turning_gate.py /
+// corridor_classifier_node.py). "straight_road" is always included, since
+// every scenario turn is followed by a "go straight" step and a
+// "straight_road" reading is what ends the turn here (see the turn branch
+// of passageTypeCallback()).
+std::vector<std::string> cmdVelController::activeTargetLabels(void){
+    if(! turn_flg_){
+        return targetLabelsForStep(scenario_progress_cnt_);
+    }
+    std::vector<std::string> labels = targetLabelsForStep(scenario_progress_cnt_ + 1);
+    if(std::find(labels.begin(), labels.end(), "straight_road") == labels.end()){
+        labels.push_back("straight_road");
     }
     return labels;
 }
@@ -249,7 +401,7 @@ bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_m
 }
 
 void cmdVelController::publishTargetLabels(void){
-    std::vector<std::string> labels = currentTargetLabels();
+    std::vector<std::string> labels = activeTargetLabels();
     std_msgs::String message;
     for(size_t i = 0; i < labels.size(); ++i){
         if(i > 0) message.data += ",";
@@ -264,6 +416,15 @@ void cmdVelController::loadNextScenario(void){
     // and this step's start is never attributed to the new step.
     step_moving_duration_sec_ = 0.0;
     have_last_cmd_vel_stamp_ = false;
+    // A pending confirmation belongs to the step that started it; never
+    // let it carry over (e.g. if next_scenario forces a step change while
+    // one is still pending).
+    immediate_match_flg_ = false;
+    immediate_match_duration_sec_ = 0.0;
+    turn_started_ = false;
+    turn_active_duration_sec_ = 0.0;
+    dead_end_streak_ = 0;
+    dead_end_stopped_ = false;
     // std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
     action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
 
@@ -275,27 +436,40 @@ void cmdVelController::loadNextScenario(void){
         stop_flg_for_pub.data = stop_flg_;
         stop_pub_.publish(stop_flg_for_pub);
         std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
+        cmd_data_pub.publish(cmd_data);
+        // "stop" is always the scenario's final step (see
+        // scenario_parser_jsk.py), so reaching it means the destination has
+        // been reached. Shut the node down instead of idling forever.
+        ROS_INFO("Scenario complete. Shutting down.");
+        ros::shutdown();
     }
     else{
         ROS_INFO("Execute next action(%s)", action.c_str());//string <=> char
         stop_flg_ = false;
         change_node_flg_ = false;
-        
+
         if(action.find("turn") != std::string::npos){//turn find
             turn_flg_ = true;//曲がる動作を開始
 
             //if(action.find("left")){
             if(action == "turn_left"){
                 std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
-            
             }
             //else if(action.find("right")){
             else if(action == "turn_right"){
                 std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
-                
             }
         }
         else{
+            // Switch to straight immediately, even if the robot is still
+            // physically rotating out of the turn that just completed.
+            // turnFinish() only fires once /passage_type has reported the
+            // destination corridor (so the turn is visually all but done)
+            // *and* the minimum-turn-time floor has passed, so dropping the
+            // turn command right here is exactly what stops the
+            // over-rotation: the robot then holds its heading down the new
+            // corridor instead of being told to keep turning until cmd_vel
+            // happens to settle on its own.
             std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.cmd_dir));
         }
     }
@@ -325,6 +499,55 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation_m
 // void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
 void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//メイン処理部
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
+    // Dead-end hold: a run of "dead_end" readings means the robot is
+    // heading into a wall (including mid-turn -- a wrong turn into a dead
+    // end still needs to stop). One stray "dead_end" frame (e.g. flashing
+    // by mid-turn while the classifier sweeps labels) is ignored, since any
+    // non-dead_end reading resets the count. dead_end_stop_streak_ in a row
+    // holds the robot stopped; this is NOT a scenario abort -- the moment
+    // /passage_type reports any other corridor type the hold is released
+    // (block below) and the current step's command is restored.
+    if(passage_type->intersection_name == "dead_end"){
+        dead_end_streak_++;
+    }
+    else{
+        dead_end_streak_ = 0;
+    }
+    if(dead_end_streak_ >= dead_end_stop_streak_){
+        if(! dead_end_stopped_){
+            ROS_WARN("dead_end x%d: holding robot until the view clears", dead_end_streak_);
+            dead_end_stopped_ = true;
+        }
+        stop_flg_ = true;
+        std_msgs::Bool stop_msg;
+        stop_msg.data = true;
+        stop_pub_.publish(stop_msg);
+        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
+        cmd_data_pub.publish(cmd_data);
+        publishTargetLabels();
+        printStatus(passage_type);
+        return;
+    }
+    if(dead_end_stopped_){
+        // Dead end cleared (streak was just reset above): release the hold,
+        // restore the current step's command, and fall through to resume
+        // normal processing.
+        dead_end_stopped_ = false;
+        stop_flg_ = false;
+        std_msgs::Bool stop_msg;
+        stop_msg.data = false;
+        stop_pub_.publish(stop_msg);
+        if(turn_flg_ && action == "turn_left"){
+            std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
+        }
+        else if(turn_flg_ && action == "turn_right"){
+            std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
+        }
+        else{
+            std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.cmd_dir));
+        }
+        ROS_INFO("dead_end cleared: resuming (action=%s)", action.c_str());
+    }
     if(passage_type->intersection_name == "turning"){
         // corridor_classifier reports "turning" independently of this
         // executor's own turn_flg_ state (it is driven by /cmd_vel, not by
@@ -340,27 +563,49 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
         printStatus(passage_type);
         return;
     }
-    if(step_moving_duration_sec_ < step_min_duration_sec_){
-        // A real turn alone takes several seconds, so any apparent node
-        // change or target match this soon after the current step began
-        // is almost certainly a stale reading from just before the
-        // transition (or noise), not genuine progress. Ignore passage_type
-        // entirely -- do not touch last_node_/change_node_flg_/turn_flg_
-        // state or compare against the target -- until this grace period
-        // has elapsed, so a step can never advance in an instant.
-        cmd_data_pub.publish(cmd_data);
-        publishTargetLabels();
-        printStatus(passage_type);
-        return;
-    }
     if(! stop_flg_){
         if(request_update_last_node_flg){
             updateLastNode(passage_type);
             request_update_last_node_flg = false;
+            // Normally change_node_flg_ only becomes true once a later
+            // reading differs from the node just latched above. But if the
+            // target is already satisfied the instant this latch happens
+            // (e.g. a short corridor where dead_end is visible immediately
+            // after the turn), current == last_node_ forever after and
+            // compareLastNodeAndCurrentNode() would never report a change --
+            // so the goal check below would never run and the scenario
+            // would stall. Start a confirmation window instead of trusting
+            // this single frame outright (see immediate_match_flg_'s
+            // declaration for why).
+            if(! turn_flg_ && compareScenarioAndPassageType(passage_type)){
+                immediate_match_flg_ = true;
+                immediate_match_duration_sec_ = 0.0;
+            }
         }
     }
         if(! turn_flg_){//actionがturnではない場合
-            if(change_node_flg_){//道タイプが変更されている場合
+            if(immediate_match_flg_){
+                if(! compareScenarioAndPassageType(passage_type)){
+                    // Changed before being confirmed: not a genuine
+                    // immediate match after all. current now differs from
+                    // last_node_ (the value latched when the window
+                    // started), so the ordinary change-detection branch
+                    // below will pick it up as a normal node change.
+                    immediate_match_flg_ = false;
+                }
+                else if(immediate_match_duration_sec_ >= immediate_match_confirm_sec_){
+                    // Held long enough to trust it.
+                    immediate_match_flg_ = false;
+                    change_node_flg_ = true;
+                }
+            }
+            if(immediate_match_flg_){
+                // Still within the confirmation window: nothing else to
+                // evaluate this frame (avoids comparing against last_node_
+                // below, which could spuriously read as "changed" while a
+                // valid-but-not-yet-trusted match is still pending).
+            }
+            else if(change_node_flg_){//道タイプが変更されている場合
                 satisfy_conditions_flg_ = compareScenarioAndPassageType(passage_type);
                 if(satisfy_conditions_flg_){
                     ROS_INFO("find target node !! ");
@@ -389,40 +634,32 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
                     ROS_INFO("Same node as last time !! ");
                 }
             }
-        }    
+        }
         else { //turn_flg_on　action中は継続
-            if (!compareLastNodeAndCurrentNode(passage_type))
+            // End the turn once /passage_type reports "straight_road": the
+            // robot is then facing straight down a corridor again, so the
+            // turn maneuver is complete. While rotating, the classifier
+            // only ever sees walls / corners / intersections and sweeps
+            // through those labels (corner_left -> 3_way_center ->
+            // corner_right -> ...), never straight_road, so straight_road
+            // is a reliable "turn finished" signal where the intermediate
+            // labels are not. Every scenario turn is followed by a
+            // "go straight" step (see config/Scenarios), so straight_road
+            // is always the expected reading right after the turn.
+            //
+            // Gated by the minimum-turn-time floor
+            // (turn_active_duration_sec_ >= turning_min_duration_sec_,
+            // counted from when the robot actually started rotating -- see
+            // turn_started_) so a spurious straight_road, or the ramp-up
+            // lag before the turn really begins, cannot cut the turn short.
+            // turnFinish() -> loadNextScenario() then switches cmd_dir to
+            // [1,0,0] immediately, published at the end of this callback.
+            if (turn_active_duration_sec_ >= turning_min_duration_sec_ &&
+                passage_type->intersection_name == "straight_road")
             {
                 turnFinish(true);  //change_flg on ターン終了まで継続
-            } 
-        }
-    if (passage_type->intersection_name == "dead_end") {
-        ROS_INFO("Dead end detected. Stopping robot.");
-        std_msgs::Bool stop_flg_for_pub;
-        stop_flg_for_pub.data = stop_flg_;
-        stop_pub_.publish(stop_flg_for_pub);
-        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
-    }
-    else if (!stop_flg_) {
-        // The block above only ever latches cmd_dir to stop_list; nothing
-        // else restores it. If an earlier (possibly spurious, single-frame)
-        // dead_end reading set it and the scenario has not since advanced
-        // to a new loadNextScenario() call, cmd_dir would otherwise stay
-        // stuck at [0, 0, 0] forever even once the passage type moves on.
-        // Re-derive it from the currently loaded action whenever we are not
-        // actually looking at a dead end.
-        if (turn_flg_) {
-            if (action == "turn_left") {
-                std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
-            }
-            else if (action == "turn_right") {
-                std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
             }
         }
-        else {
-            std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.cmd_dir));
-        }
-    }
     cmd_data_pub.publish(cmd_data);//
     publishTargetLabels();
     printStatus(passage_type);
@@ -447,22 +684,26 @@ void cmdVelController::printStatus(const scenario_navigation_msgs::cmd_dir_inter
     std::string step_direction = *std::next(target_direction_itr_begin_, step);
     std::string step_action = *std::next(target_action_itr_begin_, step);
 
-    bool in_grace_period = step_moving_duration_sec_ < step_min_duration_sec_;
-
-    std::string mode = in_grace_period
-                       ? "STEP_GRACE_PERIOD"
+    std::string mode = dead_end_stopped_ ? "DEAD_END_HOLD"
                        : turn_flg_ ? "TURNING"
                        : stop_flg_ ? "STOPPED"
+                       : immediate_match_flg_ ? "CONFIRMING_IMMEDIATE_MATCH"
                        : change_node_flg_ ? "AT_NEW_NODE(comparing)"
                        : "WAITING_FOR_NODE_CHANGE";
 
     ROS_INFO(
         "[STATUS] step=%d/%d action=%s target_type=%s target_direction=%s "
-        "order=%d/%d mode=%s step_moving_time=%.1f/%.1fs | current_node=%s last_node=%s",
+        "order=%d/%d mode=%s turn_time=%.1f/%.1fs(started=%d,care=%d) "
+        "step_moving_time=%.1fs immediate_match_time=%.1f/%.1fs "
+        "| current_node=%s last_node=%s",
         step + 1, scenario_num_,
         step_action.c_str(), step_type.c_str(), step_direction.c_str(),
         scenario_order_cnt_, step_order,
-        mode.c_str(), step_moving_duration_sec_, step_min_duration_sec_,
+        mode.c_str(),
+        turn_active_duration_sec_, turning_min_duration_sec_,
+        (int)turn_started_, (int)careAvoidanceActive(),
+        step_moving_duration_sec_,
+        immediate_match_duration_sec_, immediate_match_confirm_sec_,
         passage_type->intersection_name.c_str(), last_node_.data.c_str()
     );
 }
