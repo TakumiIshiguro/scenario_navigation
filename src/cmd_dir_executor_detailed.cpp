@@ -95,21 +95,6 @@ class cmdVelController {
         int reach_different_type_cnt_ = 0;
         int reach_target_type_cnt_margin_ = 6;
         int reach_different_type_cnt_margin_ = 6;
-        // Consecutive "dead_end" /passage_type readings. A sustained
-        // dead_end means the robot is driving at a wall (a wrong turn, or
-        // the corridor really ends), so once this reaches
-        // dead_end_stop_streak_ the robot is held stopped (see the top of
-        // passageTypeCallback()). Counted consecutively (any non-dead_end
-        // reading resets it), so a stray dead_end frame in a turn's label
-        // sweep never triggers it -- but a genuine dead_end held for the
-        // whole streak stops the robot even mid-turn.
-        int dead_end_streak_ = 0;
-        int dead_end_stop_streak_ = 8;
-        // True while the robot is being held stopped by the dead_end streak
-        // above. Not a scenario abort: the moment /passage_type reports any
-        // other corridor type, the hold is released and the current step's
-        // command is restored, so driving resumes.
-        bool dead_end_stopped_ = false;
         // How long the robot has actually been moving (see cmdVelCallback()
         // below, not wall-clock time) since the current step began (reset
         // in loadNextScenario()). Status telemetry only.
@@ -217,8 +202,6 @@ void cmdVelController::getRosParam(void){
     node_.getParam("scenario_executor/turning_min_duration_sec", turning_min_duration_sec_);
     turn_start_angular_speed_rad_s_ = 0.10;
     node_.getParam("scenario_executor/turn_start_angular_speed_rad_s", turn_start_angular_speed_rad_s_);
-    dead_end_stop_streak_ = 8;
-    node_.getParam("scenario_executor/dead_end_stop_streak", dead_end_stop_streak_);
     care_avoidance_stale_timeout_sec_ = 1.0;
     node_.getParam("scenario_executor/care_avoidance_stale_timeout_sec", care_avoidance_stale_timeout_sec_);
     // Defaults to vnm_ros/CARE's avoidance-active topic; harmless when CARE
@@ -400,9 +383,10 @@ std::vector<std::string> cmdVelController::activeTargetLabels(void){
 // (突き当りまで直進) followed by the final "stop" step. While turning, the
 // "end" step is the one the turn leads into (scenario_progress_cnt_ + 1);
 // otherwise it is the current step. Only in this shape is a "dead_end"
-// reading a valid way to finish the turn -- and the dead-end hold at the top
-// of passageTypeCallback() is suppressed so it cannot stop the robot before
-// the turn (and then the end step) completes on that dead_end.
+// reading a valid way to finish the turn (see the turn branch of
+// passageTypeCallback()): the turn leads into a corridor that ends at the
+// dead end, so a short corridor can show "dead_end" before any
+// "straight_road" is ever seen.
 bool cmdVelController::atDeadEndStopTail(void){
     int end_step = turn_flg_ ? scenario_progress_cnt_ + 1 : scenario_progress_cnt_;
     int stop_step = end_step + 1;
@@ -441,8 +425,6 @@ void cmdVelController::loadNextScenario(void){
     immediate_match_duration_sec_ = 0.0;
     turn_started_ = false;
     turn_active_duration_sec_ = 0.0;
-    dead_end_streak_ = 0;
-    dead_end_stopped_ = false;
     // std::string action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
     action = *std::next(target_action_itr_begin_, scenario_progress_cnt_);
 
@@ -517,61 +499,6 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation_m
 // void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
 void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//メイン処理部
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
-    // Dead-end hold: a run of "dead_end" readings means the robot is
-    // heading into a wall (including mid-turn -- a wrong turn into a dead
-    // end still needs to stop). One stray "dead_end" frame (e.g. flashing
-    // by mid-turn while the classifier sweeps labels) is ignored, since any
-    // non-dead_end reading resets the count. dead_end_stop_streak_ in a row
-    // holds the robot stopped; this is NOT a scenario abort -- the moment
-    // /passage_type reports any other corridor type the hold is released
-    // (block below) and the current step's command is restored.
-    //
-    // Exception: when the scenario tail is "突き当りまで直進．停止．"
-    // (atDeadEndStopTail()), a "dead_end" is the expected destination, not a
-    // wrong turn -- do not accumulate the hold streak, so the turn branch
-    // below can finish the turn on that "dead_end" (after the min-turn-time
-    // floor) and the following "end" step can then complete normally.
-    if(passage_type->intersection_name == "dead_end" && ! atDeadEndStopTail()){
-        dead_end_streak_++;
-    }
-    else{
-        dead_end_streak_ = 0;
-    }
-    if(dead_end_streak_ >= dead_end_stop_streak_){
-        if(! dead_end_stopped_){
-            ROS_WARN("dead_end x%d: holding robot until the view clears", dead_end_streak_);
-            dead_end_stopped_ = true;
-        }
-        stop_flg_ = true;
-        std_msgs::Bool stop_msg;
-        stop_msg.data = true;
-        stop_pub_.publish(stop_msg);
-        std::copy(std::begin(stop_list),std::end(stop_list),std::begin(cmd_data.cmd_dir));
-        cmd_data_pub.publish(cmd_data);
-        publishTargetLabels();
-        printStatus(passage_type);
-        return;
-    }
-    if(dead_end_stopped_){
-        // Dead end cleared (streak was just reset above): release the hold,
-        // restore the current step's command, and fall through to resume
-        // normal processing.
-        dead_end_stopped_ = false;
-        stop_flg_ = false;
-        std_msgs::Bool stop_msg;
-        stop_msg.data = false;
-        stop_pub_.publish(stop_msg);
-        if(turn_flg_ && action == "turn_left"){
-            std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.cmd_dir));
-        }
-        else if(turn_flg_ && action == "turn_right"){
-            std::copy(std::begin(right_list),std::end(right_list),std::begin(cmd_data.cmd_dir));
-        }
-        else{
-            std::copy(std::begin(str_list),std::end(str_list),std::begin(cmd_data.cmd_dir));
-        }
-        ROS_INFO("dead_end cleared: resuming (action=%s)", action.c_str());
-    }
     if(passage_type->intersection_name == "turning"){
         // corridor_classifier reports "turning" independently of this
         // executor's own turn_flg_ state (it is driven by /cmd_vel, not by
@@ -717,8 +644,7 @@ void cmdVelController::printStatus(const scenario_navigation_msgs::cmd_dir_inter
     std::string step_direction = *std::next(target_direction_itr_begin_, step);
     std::string step_action = *std::next(target_action_itr_begin_, step);
 
-    std::string mode = dead_end_stopped_ ? "DEAD_END_HOLD"
-                       : turn_flg_ ? "TURNING"
+    std::string mode = turn_flg_ ? "TURNING"
                        : stop_flg_ ? "STOPPED"
                        : immediate_match_flg_ ? "CONFIRMING_IMMEDIATE_MATCH"
                        : change_node_flg_ ? "AT_NEW_NODE(comparing)"
