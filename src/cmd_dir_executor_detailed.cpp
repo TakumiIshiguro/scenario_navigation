@@ -35,6 +35,7 @@ class cmdVelController {
         std::vector<std::string> targetLabelsForStep(int step);
         std::vector<std::string> currentTargetLabels(void);
         std::vector<std::string> activeTargetLabels(void);
+        bool atDeadEndStopTail(void);
         void publishTargetLabels(void);
         void loadNextScenario(void);//
         void updateLastNode(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_n);
@@ -395,6 +396,23 @@ std::vector<std::string> cmdVelController::activeTargetLabels(void){
     return labels;
 }
 
+// True when the rest of the scenario from here is exactly an "end" step
+// (突き当りまで直進) followed by the final "stop" step. While turning, the
+// "end" step is the one the turn leads into (scenario_progress_cnt_ + 1);
+// otherwise it is the current step. Only in this shape is a "dead_end"
+// reading a valid way to finish the turn -- and the dead-end hold at the top
+// of passageTypeCallback() is suppressed so it cannot stop the robot before
+// the turn (and then the end step) completes on that dead_end.
+bool cmdVelController::atDeadEndStopTail(void){
+    int end_step = turn_flg_ ? scenario_progress_cnt_ + 1 : scenario_progress_cnt_;
+    int stop_step = end_step + 1;
+    if(end_step < 0 || stop_step >= scenario_num_){
+        return false;
+    }
+    return *std::next(target_type_itr_begin_, end_step) == "end"
+        && *std::next(target_action_itr_begin_, stop_step) == "stop";
+}
+
 bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//シナリオと現在のノードの比較
     std::vector<std::string> labels = currentTargetLabels();
     return std::find(labels.begin(), labels.end(), passage_type->intersection_name) != labels.end();
@@ -507,7 +525,13 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
     // holds the robot stopped; this is NOT a scenario abort -- the moment
     // /passage_type reports any other corridor type the hold is released
     // (block below) and the current step's command is restored.
-    if(passage_type->intersection_name == "dead_end"){
+    //
+    // Exception: when the scenario tail is "突き当りまで直進．停止．"
+    // (atDeadEndStopTail()), a "dead_end" is the expected destination, not a
+    // wrong turn -- do not accumulate the hold streak, so the turn branch
+    // below can finish the turn on that "dead_end" (after the min-turn-time
+    // floor) and the following "end" step can then complete normally.
+    if(passage_type->intersection_name == "dead_end" && ! atDeadEndStopTail()){
         dead_end_streak_++;
     }
     else{
@@ -654,8 +678,17 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
             // lag before the turn really begins, cannot cut the turn short.
             // turnFinish() -> loadNextScenario() then switches cmd_dir to
             // [1,0,0] immediately, published at the end of this callback.
+            //
+            // When the turn leads straight into "突き当りまで直進．停止．"
+            // (atDeadEndStopTail()), a short corridor can put the robot at
+            // the dead end before any "straight_road" is ever seen, so also
+            // accept "dead_end" as the turn-finished signal here. Same
+            // min-turn-time floor: the robot still rotates for the full
+            // turning_min_duration_sec_ before this can fire.
             if (turn_active_duration_sec_ >= turning_min_duration_sec_ &&
-                passage_type->intersection_name == "straight_road")
+                (passage_type->intersection_name == "straight_road" ||
+                 (atDeadEndStopTail() &&
+                  passage_type->intersection_name == "dead_end")))
             {
                 turnFinish(true);  //change_flg on ターン終了まで継続
             }
