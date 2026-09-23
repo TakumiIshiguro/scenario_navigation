@@ -97,7 +97,7 @@ class cmdVelController {
         int reach_different_type_cnt_margin_ = 6;
         // How long the robot has actually been moving (see cmdVelCallback()
         // below, not wall-clock time) since the current step began (reset
-        // in loadNextScenario()). Status telemetry only.
+        // in loadNextScenario()).
         double step_moving_duration_sec_ = 0.0;
         // Set when the reading latched into last_node_ right as the grace
         // period above ends already satisfies the current step's target
@@ -117,7 +117,34 @@ class cmdVelController {
         // passageTypeCallback()) until turn_active_duration_sec_ below
         // reaches this. Raise scenario_executor/turning_min_duration_sec if
         // turns end too early; lower it if the robot over-rotates.
-        double turning_min_duration_sec_ = 5.0;
+        //
+        // 9.0, up from 5.0, because the end-step labels now finish a turn
+        // too (see finishesTurnAtEndStop()). Those labels -- 3_way_center,
+        // corner_left, corner_right -- are the same ones the classifier
+        // reports while sweeping past the junction the robot is turning AT,
+        // and its "turning" gate does not mask them: that needs 0.20 rad/s
+        // and CARE driving peaks around 0.10-0.15. Only elapsed rotation
+        // separates "still in the junction" from "arrived at the next one".
+        //
+        // 9 s is where the robot itself finishes 90 deg: the deployed model
+        // turns at a measured 9.7 deg/s (1.97x the teacher's 4.9 at
+        // waypoint_index 4). Holding the turn longer than that over-rotates
+        // by roughly 3 deg per extra second, so this doubles as the ceiling.
+        double turning_min_duration_sec_ = 9.0;
+        // Upper bound on the same clock. Nothing else ends a turn that the
+        // model will not end itself: the completion check needs a
+        // straight_road (or dead_end) reading, and while the robot is
+        // rotating fast enough corridor_classifier publishes "turning"
+        // instead of any corridor shape, which this executor ignores. So a
+        // model that keeps commanding a turn spins in place indefinitely.
+        //
+        // 16 s, against the 9 s a 90 deg turn takes at the deployed model's
+        // measured 9.7 deg/s, and inside the 14.5-17.3 s the teacher itself
+        // spends on one. Note this clock runs slower than wall time: it only
+        // advances while the robot is moving and not while CARE is avoiding,
+        // so a turn that keeps getting interrupted can take far longer in
+        // real time before this fires.
+        double turning_max_duration_sec_ = 16.0;
         // The floor above is measured from when the robot *actually starts
         // rotating*, not from when the turn step loaded -- the downstream
         // controller takes a while to ramp the turn up, and counting that
@@ -198,8 +225,10 @@ void cmdVelController::getRosParam(void){
     node_.getParam("scenario_executor/moving_angular_threshold", moving_angular_threshold_);
     immediate_match_confirm_sec_ = 2.0;
     node_.getParam("scenario_executor/immediate_match_confirm_sec", immediate_match_confirm_sec_);
-    turning_min_duration_sec_ = 5.0;
+    turning_min_duration_sec_ = 9.0;
     node_.getParam("scenario_executor/turning_min_duration_sec", turning_min_duration_sec_);
+    turning_max_duration_sec_ = 16.0;
+    node_.getParam("scenario_executor/turning_max_duration_sec", turning_max_duration_sec_);
     turn_start_angular_speed_rad_s_ = 0.10;
     node_.getParam("scenario_executor/turn_start_angular_speed_rad_s", turn_start_angular_speed_rad_s_);
     care_avoidance_stale_timeout_sec_ = 1.0;
@@ -235,7 +264,12 @@ void cmdVelController::cmdVelCallback(const geometry_msgs::Twist::ConstPtr& msg)
         if(immediate_match_flg_){
             immediate_match_duration_sec_ += dt;
         }
-        if(turn_started_){
+        // Not while CARE is steering around an obstacle. That angular
+        // velocity is on /cmd_vel too but does nothing for the commanded
+        // turn, so counting it would let the floor expire on time the robot
+        // spent going around something instead of rotating -- the same
+        // reason turn_started_ above waits for CARE to be inactive.
+        if(turn_started_ && ! careAvoidanceActive()){
             turn_active_duration_sec_ += dt;
         }
     }
@@ -387,6 +421,12 @@ std::vector<std::string> cmdVelController::activeTargetLabels(void){
 // passageTypeCallback()): the turn leads into a corridor that ends at the
 // dead end, so a short corridor can show "dead_end" before any
 // "straight_road" is ever seen.
+//
+// Only "dead_end", not the end step's other labels (3_way_center, corner_*).
+// Those are the same shapes the classifier sweeps through while the robot
+// rotates, so accepting them ends the turn in the junction it set out to
+// turn at. A dead end is never a junction a turn is ordered at, so seeing
+// one means the robot is somewhere new.
 bool cmdVelController::atDeadEndStopTail(void){
     int end_step = turn_flg_ ? scenario_progress_cnt_ + 1 : scenario_progress_cnt_;
     int stop_step = end_step + 1;
@@ -396,6 +436,7 @@ bool cmdVelController::atDeadEndStopTail(void){
     return *std::next(target_type_itr_begin_, end_step) == "end"
         && *std::next(target_action_itr_begin_, stop_step) == "stop";
 }
+
 
 bool cmdVelController::compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//シナリオと現在のノードの比較
     std::vector<std::string> labels = currentTargetLabels();
@@ -499,6 +540,20 @@ bool cmdVelController::compareLastNodeAndCurrentNode(const scenario_navigation_m
 // void cmdVelController::passageTypeCallback(const std_msgs::String::ConstPtr& passage_type){//メイン処理部
 void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& passage_type){//メイン処理部
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
+    // Checked before the "turning" early return below, which would
+    // otherwise skip it for exactly the case this exists to catch: a turn
+    // that never ends keeps the robot rotating, and rotating is when
+    // "turning" is published.
+    if(turn_flg_ && turning_max_duration_sec_ > 0.0 &&
+       turn_active_duration_sec_ >= turning_max_duration_sec_){
+        ROS_WARN("turn exceeded %.1f s without a finish signal; ending it anyway",
+                 turning_max_duration_sec_);
+        turnFinish(true);
+        cmd_data_pub.publish(cmd_data);
+        publishTargetLabels();
+        printStatus(passage_type);
+        return;
+    }
     if(passage_type->intersection_name == "turning"){
         // corridor_classifier reports "turning" independently of this
         // executor's own turn_flg_ state (it is driven by /cmd_vel, not by
