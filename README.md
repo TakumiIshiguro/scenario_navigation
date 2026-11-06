@@ -1,6 +1,13 @@
 # scenario_navigation  
 人が道案内に用いる情報（シナリオ）を分解し,「条件」と「行動」を抽出するパッケージ
 
+## 実行状況の可視化
+`cmd_dir_executor_detailed`は`/scenario_status`（`std_msgs/String`、JSON）に現在の状態を出力します。次のコマンドで、シナリオの進み具合、現在の通路クラス、受理するラベル、旋回距離、CAREの作動を画像で表示できます。
+```bash
+roslaunch scenario_navigation scenario_overlay.launch
+```
+画像は`/scenario_navigation/overlay`に出力します。`/scenario_status`が1秒以上届かないと`STALE`を表示します。
+
 ## パッケージの構成
 ```
 ├── CMakeLists.txt

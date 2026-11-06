@@ -1,0 +1,12 @@
+<launch>
+  <arg name="output_topic" default="/scenario_navigation/overlay"/>
+  <arg name="show_image" default="true"/>
+
+  <node pkg="scenario_navigation" type="scenario_overlay.py" name="scenario_overlay" output="screen">
+    <param name="output_topic" value="$(arg output_topic)"/>
+  </node>
+
+  <node pkg="image_view" type="image_view" name="scenario_overlay_view" if="$(arg show_image)">
+    <remap from="image" to="$(arg output_topic)"/>
+  </node>
+</launch>
