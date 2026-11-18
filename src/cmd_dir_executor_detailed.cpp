@@ -123,8 +123,11 @@ class cmdVelController {
         // 5 deg from Gazebo runs: wider windows let a label end the turn at
         // 76-87 deg, and the under-rotated robot then met the next wall.
         double turning_label_window_deg_ = 5.0;
-        // Fallback for a turn that never rotates that far.
-        double turning_timeout_sec_ = 60.0;
+        // Fallback for a turn that never rotates that far. 30 s: at 60 s a turn
+        // whose end was missed kept the command through the whole next corridor
+        // and took the following corner too (158 deg in Gazebo); at 20 s a slow,
+        // wide turn that CARE pushed back off a wall was cut at 51 deg.
+        double turning_timeout_sec_ = 30.0;
         double turn_active_angle_rad_ = 0.0;
         double turn_direction_ = 0.0; // +1 for a left turn, -1 for a right turn.
         double turn_active_duration_sec_ = 0.0;
@@ -192,7 +195,7 @@ void cmdVelController::getRosParam(void){
     node_.getParam("scenario_executor/turning_max_angle_deg", turning_max_angle_deg_);
     turning_label_window_deg_ = 5.0;
     node_.getParam("scenario_executor/turning_label_window_deg", turning_label_window_deg_);
-    turning_timeout_sec_ = 20.0;
+    turning_timeout_sec_ = 30.0;
     node_.getParam("scenario_executor/turning_timeout_sec", turning_timeout_sec_);
     care_avoidance_stale_timeout_sec_ = 1.0;
     node_.getParam("scenario_executor/care_avoidance_stale_timeout_sec", care_avoidance_stale_timeout_sec_);
