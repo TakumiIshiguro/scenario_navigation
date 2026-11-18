@@ -31,6 +31,7 @@ class cmdVelController {
         // void passageTypeCallback(const std_msgs::String::ConstPtr& intersection_name);
         bool compareScenarioAndPassageType(const scenario_navigation_msgs::cmd_dir_intersection::ConstPtr& intersection_name);
         bool directionAvailable(const std::string& intersection_name, const std::string& direction);
+        bool frontOpen(const std::string& intersection_name);
         bool nextTurnFeasibleAtStep(int step, const std::string& intersection_name);
         bool nextTurnFeasibleAt(const std::string& intersection_name);
         std::vector<std::string> targetLabelsForStep(int step);
@@ -116,6 +117,12 @@ class cmdVelController {
         // ending it instead left the heading a few degrees short, and pure
         // pursuit does not correct that on the straight that follows.
         double turning_max_angle_deg_ = 90.0;
+        // Within +-this of turning_max_angle_deg_, a corridor label with an
+        // open front ends the turn early (from max - window), and the turn
+        // is forced to end only at max + window. Zero keeps the angle alone.
+        // 5 deg from Gazebo runs: wider windows let a label end the turn at
+        // 76-87 deg, and the under-rotated robot then met the next wall.
+        double turning_label_window_deg_ = 5.0;
         // Fallback for a turn that never rotates that far.
         double turning_timeout_sec_ = 60.0;
         double turn_active_angle_rad_ = 0.0;
@@ -183,7 +190,9 @@ void cmdVelController::getRosParam(void){
     node_.getParam("scenario_executor/target_guard_distance_m", target_guard_distance_m_);
     turning_max_angle_deg_ = 90.0;
     node_.getParam("scenario_executor/turning_max_angle_deg", turning_max_angle_deg_);
-    turning_timeout_sec_ = 60.0;
+    turning_label_window_deg_ = 5.0;
+    node_.getParam("scenario_executor/turning_label_window_deg", turning_label_window_deg_);
+    turning_timeout_sec_ = 20.0;
     node_.getParam("scenario_executor/turning_timeout_sec", turning_timeout_sec_);
     care_avoidance_stale_timeout_sec_ = 1.0;
     node_.getParam("scenario_executor/care_avoidance_stale_timeout_sec", care_avoidance_stale_timeout_sec_);
@@ -256,6 +265,15 @@ bool cmdVelController::directionAvailable(const std::string& intersection_name, 
                intersection_name == "cross_road";
     }
     return true;
+}
+
+// Whether the label shows a corridor straight ahead. "turning" and the
+// labels without a front exit (dead_end, corners, 3_way_center) do not.
+bool cmdVelController::frontOpen(const std::string& intersection_name){
+    return intersection_name == "straight_road" ||
+           intersection_name == "3_way_left" ||
+           intersection_name == "3_way_right" ||
+           intersection_name == "cross_road";
 }
 
 // Whether the scenario step immediately after the given one, if it is a
@@ -432,14 +450,26 @@ void cmdVelController::passageTypeCallback(const scenario_navigation_msgs::cmd_d
 //std::copy(std::begin(left_list),std::end(left_list),std::begin(cmd_data.data));
     // Checked before the "turning" early return below, since rotating is
     // when "turning" is published.
+    double turn_angle_deg = turn_active_angle_rad_ * 180.0 / M_PI;
+    double turn_window_deg = std::max(0.0, turning_label_window_deg_);
+    // Inside the window, a label with a corridor ahead means the robot
+    // already faces down the new corridor, so the label ends the turn.
+    bool label_ends_turn =
+        turn_window_deg > 0.0 && turning_max_angle_deg_ > 0.0 &&
+        turn_angle_deg >= turning_max_angle_deg_ - turn_window_deg &&
+        frontOpen(passage_type->intersection_name);
+    bool angle_ends_turn =
+        turning_max_angle_deg_ > 0.0 &&
+        turn_angle_deg >= turning_max_angle_deg_ + turn_window_deg;
     if(turn_flg_ &&
-       ((turning_max_angle_deg_ > 0.0 &&
-         turn_active_angle_rad_ * 180.0 / M_PI >= turning_max_angle_deg_) ||
+       (label_ends_turn || angle_ends_turn ||
         (turning_timeout_sec_ > 0.0 &&
          turn_active_duration_sec_ >= turning_timeout_sec_))){
-        ROS_INFO("turn ended at %.1f/%.1f deg in %.1f/%.1f s",
-                 turn_active_angle_rad_ * 180.0 / M_PI, turning_max_angle_deg_,
-                 turn_active_duration_sec_, turning_timeout_sec_);
+        ROS_INFO("turn ended at %.1f/%.1f+-%.1f deg in %.1f/%.1f s by %s (%s)",
+                 turn_angle_deg, turning_max_angle_deg_, turn_window_deg,
+                 turn_active_duration_sec_, turning_timeout_sec_,
+                 label_ends_turn ? "label" : angle_ends_turn ? "angle" : "timeout",
+                 passage_type->intersection_name.c_str());
         turnFinish(true);
         cmd_data_pub.publish(cmd_data);
         printStatus(passage_type);
